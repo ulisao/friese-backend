@@ -21,6 +21,25 @@ model Shipment {
   receiverEmail String         @map("receiver_email") @db.VarChar(255)
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
+  evidence      Evidence[]
 
   @@map("shipments")
+}
+
+enum EvidenceType {
+  DEPARTURE
+  COMPLAINT
+}
+
+model Evidence {
+  id           String       @id @default(uuid()) @db.Uuid
+  shipmentId   String       @map("shipment_id") @db.Uuid
+  shipment     Shipment     @relation(fields: [shipmentId], references: [id])
+  fileUrl      String       @map("file_url")
+  fileHash     String       @map("file_hash") @db.VarChar(64)
+  metadataJson Json         @map("metadata_json")
+  type         EvidenceType
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@map("evidence")
 }
