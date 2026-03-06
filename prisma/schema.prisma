@@ -1,0 +1,26 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+enum ShipmentStatus {
+  pending
+  in_transit
+  delivered
+  cancelled
+}
+
+model Shipment {
+  id            String         @id @default(uuid()) @db.Uuid
+  trackingCode  String         @unique @map("tracking_code") @db.VarChar(100)
+  status        ShipmentStatus @default(pending)
+  senderId      String?        @map("sender_id") @db.Uuid
+  receiverEmail String         @map("receiver_email") @db.VarChar(255)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  @@map("shipments")
+}
