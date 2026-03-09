@@ -1,10 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
-import crypto from 'crypto';
+import { generateUniqueTrackingCode } from '../utils/generateTracking';
 
-const generateTrackingCode = () => {
-  return 'TRK-' + crypto.randomBytes(3).toString('hex').toUpperCase();
-};
+const trackingCode = await generateUniqueTrackingCode();
 
 export async function shipmentRoutes(fastify: FastifyInstance) {
   fastify.post('/shipments', {
