@@ -24,6 +24,7 @@ model Shipment {
   evidence      Evidence[]
   fleteValidations   FleteValidation[]
   disputeTokens DisputeToken[]
+  auditLogs     AuditLog[]
 
   @@map("shipments")
 }
@@ -68,4 +69,16 @@ model DisputeToken {
   usedAt      DateTime? @map("used_at")
 
   @@map("dispute_tokens")
+}
+
+model AuditLog {
+  id         String          @id @default(uuid()) @db.Uuid
+  shipmentId String          @map("shipment_id") @db.Uuid
+  shipment   Shipment        @relation(fields: [shipmentId], references: [id])
+  fromStatus ShipmentStatus? @map("from_status")
+  toStatus   ShipmentStatus  @map("to_status")
+  actor      String          @db.VarChar(255)
+  timestamp  DateTime        @default(now())
+
+  @@map("audit_logs")
 }
