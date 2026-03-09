@@ -23,6 +23,7 @@ model Shipment {
   updatedAt     DateTime       @updatedAt @map("updated_at")
   evidence      Evidence[]
   fleteValidations   FleteValidation[]
+  disputeTokens DisputeToken[]
 
   @@map("shipments")
 }
@@ -56,4 +57,15 @@ model FleteValidation {
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@map("flete_validations")
+}
+
+model DisputeToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  shipmentId  String    @map("shipment_id") @db.Uuid
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
+  visualToken String    @map("visual_token") @db.VarChar(255)
+  generatedAt DateTime  @default(now()) @map("generated_at")
+  usedAt      DateTime? @map("used_at")
+
+  @@map("dispute_tokens")
 }
