@@ -22,6 +22,7 @@ model Shipment {
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
   evidence      Evidence[]
+  fleteValidations   FleteValidation[]
 
   @@map("shipments")
 }
@@ -42,4 +43,17 @@ model Evidence {
   createdAt    DateTime     @default(now()) @map("created_at")
 
   @@map("evidence")
+}
+
+model FleteValidation {
+  id          String    @id @default(uuid()) @db.Uuid
+  shipmentId  String    @map("shipment_id") @db.Uuid
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
+  phoneSentTo String    @map("phone_sent_to") @db.VarChar(20)
+  otpCode     String    @map("otp_code") @db.VarChar(255)
+  validatedAt DateTime? @map("validated_at") 
+  ipAddress   String?   @map("ip_address") @db.VarChar(45)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("flete_validations")
 }
