@@ -1,7 +1,7 @@
-import { ShipmentStatus } from '@prisma/client';
+import { PrismaClient, ShipmentStatus } from '@prisma/client';
 import { validateTransition } from './stateMachine.js'; 
-import { prisma } from '../db.js';
 
+const prisma = new PrismaClient();
 
 export const updateShipmentStatus = async (
   shipmentId: string,

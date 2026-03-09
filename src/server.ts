@@ -1,15 +1,15 @@
 // src/server.ts
 import Fastify from 'fastify';
-import { pool } from './db';
+import { prisma } from './db';
+import { shipmentRoutes } from './routes/shipments.routes.js';
 
 const fastify = Fastify({ logger: true });
 
 const start = async () => {
   try {
     // 1. Verificamos la conexión a la base de datos haciendo un query simple
-    const client = await pool.connect();
+    await prisma.$connect();
     fastify.log.info('Conexión a PostgreSQL (Supabase) exitosa');
-    client.release(); // Siempre soltamos el cliente para devolverlo al pool
 
     // 2. Levantamos el servidor de Fastify
     await fastify.listen({ port: 3000 });
@@ -20,3 +20,5 @@ const start = async () => {
 };
 
 start();
+
+fastify.register(shipmentRoutes)
