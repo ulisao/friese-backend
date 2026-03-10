@@ -1,8 +1,8 @@
-// src/workers/evidenceWorker.ts
-import { prisma } from '../db.js'; // O '../db' si no usás la extensión .js
+import { prisma } from '../db.js';
 import sharp from 'sharp';
 import path from 'node:path';
 import fs from 'node:fs';
+import { uploadFileToStorage } from '../services/storage';
 
 export const processEvidenceImage = async (
   evidenceId: string, 

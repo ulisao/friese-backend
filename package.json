@@ -16,6 +16,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1005.0",
+    "@aws-sdk/s3-request-presigner": "^3.1005.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/multipart": "^9.4.0",
     "@prisma/adapter-pg": "^7.4.2",
