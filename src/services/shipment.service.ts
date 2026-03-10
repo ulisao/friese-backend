@@ -1,5 +1,5 @@
 import { PrismaClient, ShipmentStatus } from '@prisma/client';
-import { validateTransition } from './stateMachine.js'; 
+import { validateTransition } from '../utils/stateMachine.js'; 
 
 const prisma = new PrismaClient();
 

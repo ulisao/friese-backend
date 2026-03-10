@@ -1,7 +1,8 @@
 // src/server.ts
 import Fastify from 'fastify';
 import { prisma } from './db';
-import { shipmentRoutes } from './routes/shipments.routes.js';
+import { evidenceRoutes, shipmentRoutes } from './routes/shipments.routes.js';
+import multipart from '@fastify/multipart';
 
 const fastify = Fastify({ logger: true });
 
@@ -20,5 +21,11 @@ const start = async () => {
 };
 
 start();
+fastify.register(multipart, {
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+  }
+});
+fastify.register(shipmentRoutes);
+fastify.register(evidenceRoutes);
 
-fastify.register(shipmentRoutes)
