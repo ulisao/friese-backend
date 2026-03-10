@@ -5,19 +5,9 @@ import fs from 'node:fs';
 import util from 'node:util';
 import { pipeline } from 'node:stream';
 import path from 'node:path';
+import { processEvidenceImage } from '../workers/evidenceWorker';
 
 const pump = util.promisify(pipeline);
-
-// Función simulada para el procesamiento en background
-const enqueueEvidenceProcessing = async (evidenceId: string, filePath: string) => {
-  // Al no tener un "await" cuando la llamemos, esto corre en paralelo
-  setTimeout(() => {
-    console.log(`[BACKGROUND JOB] Procesando evidencia ${evidenceId}...`);
-    console.log(`[BACKGROUND JOB] Analizando archivo en ${filePath}...`);
-    // Acá en el futuro iría la lógica para subir a S3, comprimir el video, etc.
-    console.log(`[BACKGROUND JOB] ¡Evidencia ${evidenceId} procesada con éxito!`);
-  }, 5000);
-};
 
 export async function evidenceRoutes(fastify: FastifyInstance) {
   // Aseguramos que exista la carpeta de uploads localmente
@@ -85,10 +75,8 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
         type: evidenceTypeRaw as 'DEPARTURE' | 'COMPLAINT',
       }
     });
-
-    // ¡La magia asíncrona! Llamamos a la función pero SIN await. 
-    // Así Fastify responde inmediatamente mientras el trabajo se hace de fondo.
-    enqueueEvidenceProcessing(evidence.id, filePath);
+ 
+    processEvidenceImage(evidence.id, filePath, data.mimetype);
 
     // 202 Accepted significa: "Recibido, lo estamos procesando"
     return reply.status(202).send({
