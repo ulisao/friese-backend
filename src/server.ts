@@ -3,9 +3,21 @@ import Fastify from 'fastify';
 import { prisma } from './db';
 import { shipmentRoutes } from './routes/shipments.routes';
 import { evidenceRoutes } from './routes/evidence.routes';
+import { fleteRoutes } from './routes/flete.routes';
 import multipart from '@fastify/multipart';
 
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({
+  logger: {
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname',      
+        colorize: true               
+      }
+    }
+  }
+});
 
 const start = async () => {
   try {
@@ -29,4 +41,5 @@ fastify.register(multipart, {
 });
 fastify.register(shipmentRoutes);
 fastify.register(evidenceRoutes);
+fastify.register(fleteRoutes);
 
