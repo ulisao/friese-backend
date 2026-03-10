@@ -1,7 +1,8 @@
 // src/server.ts
 import Fastify from 'fastify';
 import { prisma } from './db';
-import { evidenceRoutes, shipmentRoutes } from './routes/shipments.routes.js';
+import { shipmentRoutes } from './routes/shipments.routes';
+import { evidenceRoutes } from './routes/evidence.routes';
 import multipart from '@fastify/multipart';
 
 const fastify = Fastify({ logger: true });
