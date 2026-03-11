@@ -5,6 +5,7 @@ import { shipmentRoutes } from './routes/shipments.routes';
 import { evidenceRoutes } from './routes/evidence.routes';
 import { fleteRoutes } from './routes/flete.routes';
 import multipart from '@fastify/multipart';
+import { trackingRoutes } from './routes/tracking.routes.js';
 
 const fastify = Fastify({
   logger: {
@@ -42,4 +43,5 @@ fastify.register(multipart, {
 fastify.register(shipmentRoutes);
 fastify.register(evidenceRoutes);
 fastify.register(fleteRoutes);
+fastify.register(trackingRoutes)
 
