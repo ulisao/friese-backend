@@ -17,6 +17,7 @@ enum ShipmentStatus {
 }
 
 model Shipment {
+<<<<<<< HEAD
   id            String         @id @default(uuid()) @db.Uuid
   trackingCode  String         @unique @map("tracking_code") @db.VarChar(100)
   trackingToken String       @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
@@ -30,6 +31,21 @@ model Shipment {
   fleteValidations   FleteValidation[]
   disputeTokens DisputeToken[]
   auditLogs     AuditLog[]
+=======
+  id               String            @id @default(uuid()) @db.Uuid
+  trackingCode     String            @unique @map("tracking_code") @db.VarChar(100)
+  trackingToken    String            @unique @default(uuid()) @map("tracking_token") @db.VarChar(100) // <-- ESTA ES LA LÍNEA QUE FALTABA
+  status           ShipmentStatus    @default(PENDING_EVIDENCE)
+  senderId         String?           @map("sender_id") @db.Uuid
+  metadata         Json?
+  receiverEmail    String            @map("receiver_email") @db.VarChar(255)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  evidence         Evidence[]
+  fleteValidations FleteValidation[]
+  disputeTokens    DisputeToken[]
+  auditLogs        AuditLog[]
+>>>>>>> feature/ticket-21-dispute-logic
 
   @@map("shipments")
 }
@@ -71,6 +87,7 @@ model DisputeToken {
   shipment    Shipment  @relation(fields: [shipmentId], references: [id])
   visualToken String    @map("visual_token") @db.VarChar(255)
   generatedAt DateTime  @default(now()) @map("generated_at")
+  expiresAt    DateTime  @map("expires_at")
   usedAt      DateTime? @map("used_at")
 
   @@map("dispute_tokens")
