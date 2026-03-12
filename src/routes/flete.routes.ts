@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { sendOTP } from '../services/sms';
 import crypto from 'node:crypto';
+import { sendTrackingEmail } from '../services/email';
 
 export async function fleteRoutes(fastify: FastifyInstance) {
   
@@ -102,20 +103,21 @@ fastify.post('/shipments/:id/confirm-flete', {
     }
 
     // 4. ¡Match exitoso! Ejecutamos todo junto en una Transacción
-    await prisma.$transaction([
+    const transactionResults = await prisma.$transaction([
       // A) Marcamos el OTP como usado
       prisma.fleteValidation.update({
         where: { id: latestValidation.id },
         data: { 
           validatedAt: now,
-          ipAddress: request.ip // Guardamos la IP por seguridad
+          ipAddress: request.ip
         }
       }),
       
-      // B) Pasamos el envío a En Tránsito
+      // B) Pasamos el envío a En Tránsito Y PEDIMOS LOS DATOS DE VUELTA
       prisma.shipment.update({
         where: { id: shipmentId },
-        data: { status: 'IN_TRANSIT' }
+        data: { status: 'IN_TRANSIT' },
+        select: { receiverEmail: true, trackingCode: true, trackingToken: true } // <-- NUEVO
       }),
 
       // C) Dejamos registro en la auditoría
@@ -124,15 +126,27 @@ fastify.post('/shipments/:id/confirm-flete', {
           shipmentId,
           fromStatus: 'PENDING_FLETE',
           toStatus: 'IN_TRANSIT',
-          actor: 'operario_en_planta' // TODO: Leer del token JWT cuando agregues Auth
+          actor: 'operario_en_planta'
         }
       })
     ]);
 
-    // 5. Devolvemos el éxito al frontend
+    // Extraemos el shipment actualizado de la transacción
+    const updatedShipment = transactionResults[1];
+
+    // 5. Disparamos el email de forma ASÍNCRONA (sin el await para no demorar la respuesta de la API)
+    sendTrackingEmail(
+      updatedShipment.receiverEmail, 
+      updatedShipment.trackingCode, 
+      updatedShipment.trackingToken
+    );
+
+    // 6. Devolvemos el éxito al frontend
     return reply.status(200).send({
-      message: 'Flete validado exitosamente. El envío ya está en tránsito.',
+      message: 'Flete validado exitosamente. El envío ya está en tránsito y el email fue enviado.',
       status: 'IN_TRANSIT'
     });
   });
+
+
 }
