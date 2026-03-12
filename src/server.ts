@@ -6,6 +6,7 @@ import { evidenceRoutes } from './routes/evidence.routes';
 import { fleteRoutes } from './routes/flete.routes';
 import { trackingRoutes } from './routes/tracking.routes';
 import multipart from '@fastify/multipart';
+import fastifyRateLimit from '@fastify/rate-limit';
 
 const fastify = Fastify({
   logger: {
@@ -40,6 +41,13 @@ fastify.register(multipart, {
     fileSize: 50 * 1024 * 1024,
   }
 });
+
+fastify.register(fastifyRateLimit, {
+  global: false,
+  max: 5,        
+  timeWindow: '10 minute' 
+});
+
 fastify.register(shipmentRoutes);
 fastify.register(evidenceRoutes);
 fastify.register(fleteRoutes);

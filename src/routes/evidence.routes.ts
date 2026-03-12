@@ -16,7 +16,14 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     fs.mkdirSync(uploadDir);
   }
 
-  fastify.post('/shipments/:id/evidence', async (request, reply) => {
+  fastify.post('/shipments/:id/evidence', {
+    config: {
+      rateLimit: {
+        max: 5, // Máximo 5 fotos
+        timeWindow: '10 minute' // Por IP cada 10 minutos
+      }
+    }
+  }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
 
     const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
@@ -84,7 +91,14 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.post('/shipments/:id/complaint/photo', async (request, reply) => {
+  fastify.post('/shipments/:id/complaint/photo', {
+    config: {
+      rateLimit: {
+        max: 3, 
+        timeWindow: '10 minute'
+      }
+    }
+  }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
 
     // 1. Verificar si hay un token activo y no expirado para este envío
