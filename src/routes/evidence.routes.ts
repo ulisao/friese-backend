@@ -63,6 +63,29 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const filePath = path.join(uploadDir, fileName);
     await pump(data.file, fs.createWriteStream(filePath));
 
+    const { fileTypeFromFile } = await import('file-type');
+    const realFileType = await fileTypeFromFile(filePath);
+    
+    // Definimos los verdaderos tipos que aceptamos
+    const allowedMimes = [
+      'image/jpeg', 
+      'image/png', 
+      'image/webp', 
+      'video/mp4', 
+      'video/quicktime' // MOV
+    ];
+
+    // Si no pudimos leer la firma o no está en la lista blanca, lo fletamos
+    if (!realFileType || !allowedMimes.includes(realFileType.mime)) {
+      // Borramos la basura maliciosa del servidor inmediatamente
+      fs.unlinkSync(filePath);
+      request.log.warn(`[SECURITY] Intento de subida rechazado. MIME real detectado: ${realFileType?.mime || 'desconocido'}`);
+      
+      return reply.status(415).send({ 
+        error: 'Unsupported Media Type. El archivo está corrupto o tiene una extensión falsa. Solo se permiten archivos JPG, PNG, WEBP, MP4 y MOV reales.' 
+      });
+    }
+
     const calculatedHash = await calculateFileHash(filePath);
 
     if (calculatedHash !== hash) {
@@ -134,6 +157,29 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const filePath = path.join(uploadDir, fileName);
 
     await pump(data.file, fs.createWriteStream(filePath));
+
+    const { fileTypeFromFile } = await import('file-type');
+    const realFileType = await fileTypeFromFile(filePath);
+    
+    // Definimos los verdaderos tipos que aceptamos
+    const allowedMimes = [
+      'image/jpeg', 
+      'image/png', 
+      'image/webp', 
+      'video/mp4', 
+      'video/quicktime' // MOV
+    ];
+
+    // Si no pudimos leer la firma o no está en la lista blanca, lo fletamos
+    if (!realFileType || !allowedMimes.includes(realFileType.mime)) {
+      // Borramos la basura maliciosa del servidor inmediatamente
+      fs.unlinkSync(filePath);
+      request.log.warn(`[SECURITY] Intento de subida rechazado. MIME real detectado: ${realFileType?.mime || 'desconocido'}`);
+      
+      return reply.status(415).send({ 
+        error: 'Unsupported Media Type. El archivo está corrupto o tiene una extensión falsa. Solo se permiten archivos JPG, PNG, WEBP, MP4 y MOV reales.' 
+      });
+    }
 
     // Como el schema pide un hash obligatorio, lo calculamos igual (nunca viene mal)
     const calculatedHash = await calculateFileHash(filePath);
