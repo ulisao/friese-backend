@@ -1,3 +1,4 @@
+//src/routes/flete.routes
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { sendOTP } from '../services/sms';

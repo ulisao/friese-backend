@@ -6,7 +6,6 @@ import { evidenceRoutes } from './routes/evidence.routes';
 import { fleteRoutes } from './routes/flete.routes';
 import { trackingRoutes } from './routes/tracking.routes';
 import multipart from '@fastify/multipart';
-import { trackingRoutes } from './routes/tracking.routes.js';
 
 const fastify = Fastify({
   logger: {
@@ -44,9 +43,4 @@ fastify.register(multipart, {
 fastify.register(shipmentRoutes);
 fastify.register(evidenceRoutes);
 fastify.register(fleteRoutes);
-<<<<<<< HEAD
 fastify.register(trackingRoutes);
-=======
-fastify.register(trackingRoutes)
-
->>>>>>> feature/ticket-21-dispute-logic

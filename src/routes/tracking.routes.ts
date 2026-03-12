@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 // src/routes/tracking.routes.ts
-=======
-
->>>>>>> feature/ticket-21-dispute-logic
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { generateSignedUrl } from '../services/storage';

@@ -1,3 +1,4 @@
+//shipment.service
 import { PrismaClient, ShipmentStatus } from '@prisma/client';
 import { validateTransition } from '../utils/stateMachine.js'; 
 
