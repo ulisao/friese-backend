@@ -24,20 +24,35 @@ export interface PendingEvidence {
   createdAt: number;
 }
 
+// 3. Definimos la estructura de la sesión de autenticación (JWT)
+export interface AuthSession {
+  id?: number;
+  token: string;
+  createdAt: number;
+}
+
 export class FrieseDB extends Dexie {
   // Declaramos las tablas fuertemente tipadas
   pending_shipments!: Table<PendingShipment, number>;
   pending_evidence!: Table<PendingEvidence, number>;
+  auth_session!: Table<AuthSession, number>;
 
   constructor() {
     super('FrieseOfflineDB');
-    
+
     // IMPORTANTE: Cuando cambiás la estructura en Dexie, subís la versión.
     // Como en el ticket anterior hicimos la versión 1 de prueba, pasamos a la 2.
     // Solo se declaran las primary keys (++) y los campos por los que vas a hacer búsquedas (índices)
     this.version(2).stores({
       pending_shipments: '++id, createdAt',
       pending_evidence: '++id, shipmentId, type, createdAt'
+    });
+    
+    // Versión 3: Agregamos la tabla auth_session
+    this.version(3).stores({
+      pending_shipments: '++id, createdAt',
+      pending_evidence: '++id, shipmentId, type, createdAt',
+      auth_session: '++id, createdAt'
     });
   }
 }

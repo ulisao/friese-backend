@@ -27,6 +27,23 @@ const start = async () => {
     await prisma.$connect();
     fastify.log.info('Conexión a PostgreSQL (Supabase) exitosa');
 
+    fastify.register(multipart, {
+      limits: {
+        fileSize: 50 * 1024 * 1024,
+      }
+    });
+
+    fastify.register(fastifyRateLimit, {
+      global: false,
+      max: 5,        
+      timeWindow: '10 minute' 
+    });
+
+    fastify.register(shipmentRoutes);
+    fastify.register(evidenceRoutes);
+    fastify.register(fleteRoutes);
+    fastify.register(trackingRoutes);
+
     // 2. Levantamos el servidor de Fastify
     await fastify.listen({ port: 3000 });
   } catch (err) {
@@ -36,19 +53,3 @@ const start = async () => {
 };
 
 start();
-fastify.register(multipart, {
-  limits: {
-    fileSize: 50 * 1024 * 1024,
-  }
-});
-
-fastify.register(fastifyRateLimit, {
-  global: false,
-  max: 5,        
-  timeWindow: '10 minute' 
-});
-
-fastify.register(shipmentRoutes);
-fastify.register(evidenceRoutes);
-fastify.register(fleteRoutes);
-fastify.register(trackingRoutes);

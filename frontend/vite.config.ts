@@ -1,14 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [
+    tailwindcss(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',
       // Archivos estáticos extra que querés cachear sí o sí
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'], 
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
         name: 'Logística PWA',
         short_name: 'Logística',
@@ -40,4 +42,7 @@ export default defineConfig({
       }
     })
   ],
+  server: {
+    allowedHosts: ['all'],
+  },
 });

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
 }
 
 enum ShipmentStatus {
@@ -58,7 +58,7 @@ model FleteValidation {
   shipment    Shipment  @relation(fields: [shipmentId], references: [id])
   phoneSentTo String    @map("phone_sent_to") @db.VarChar(20)
   otpCode     String    @map("otp_code") @db.VarChar(255)
-  validatedAt DateTime? @map("validated_at") 
+  validatedAt DateTime? @map("validated_at")
   ipAddress   String?   @map("ip_address") @db.VarChar(45)
   createdAt   DateTime  @default(now()) @map("created_at")
 
@@ -87,4 +87,29 @@ model AuditLog {
   timestamp  DateTime        @default(now())
 
   @@map("audit_logs")
+}
+
+model Device {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  company      Company   @relation(fields: [companyId], references: [id])
+  operatorName String    @map("operator_name") @db.VarChar(255)
+  tokenHash    String    @map("token_hash") @db.VarChar(64)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  @@map("devices")
+}
+
+model Company {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  name         String   @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  devices      Device[]
+
+  @@map("companies")
 }
