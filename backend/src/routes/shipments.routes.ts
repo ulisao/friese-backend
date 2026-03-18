@@ -2,13 +2,14 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { generateUniqueTrackingCode } from '../utils/generateTracking.js';
-import { confirmDelivery, initiateDispute } from '../services/receiver.service.js';
+import { confirmDelivery, initiateDispute } from '../services/receiver.js';
 import crypto from 'node:crypto';
 
 export async function shipmentRoutes(fastify: FastifyInstance) {
 
-  // 1. CREAR ENVÍO
+  // POST /shipments — Crear envío
   fastify.post('/shipments', {
+    preHandler: fastify.authenticateDevice,
     schema: {
       body: {
         type: 'object',
@@ -22,6 +23,12 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       }
     }
   }, async (request, reply) => {
+    const { id: deviceId, companyId } = request.user;
+
+    if (!companyId) {
+      return reply.status(401).send({ error: 'Token de dispositivo inválido. Falta companyId.' });
+    }
+
     const { email, destinatario, lote, cantidad } = request.body as {
       email: string;
       destinatario: string;
@@ -37,6 +44,8 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
         receiverEmail: email,
         trackingCode,
         trackingToken,
+        companyId,
+        createdByDevice: deviceId,
         metadata: { destinatario, lote, cantidad }
       }
     });
@@ -48,7 +57,7 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // 2. CONFIRMAR / CERRAR ENVÍO
+  // POST /shipments/:id/confirm — Receptor da conformidad
   fastify.post('/shipments/:id/confirm', {
     schema: {
       querystring: {
@@ -76,7 +85,7 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // 3. INICIAR RECLAMO
+  // POST /shipments/:id/complaint — Receptor inicia disputa
   fastify.post('/shipments/:id/complaint', {
     schema: {
       querystring: {

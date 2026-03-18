@@ -1,13 +1,15 @@
-//src/routes/flete.routes
+// src/routes/flete.routes.ts
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
-import { sendOTP } from '../services/sms';
+import { sendOTP } from '../services/sms.js';
 import crypto from 'node:crypto';
-import { sendTrackingEmail } from '../services/email';
+import { sendTrackingEmail } from '../services/email.js';
 
 export async function fleteRoutes(fastify: FastifyInstance) {
-  
+
+  // POST /shipments/:id/verify-flete — Operario envía OTP al fletista
   fastify.post('/shipments/:id/verify-flete', {
+    preHandler: fastify.authenticateDevice,
     schema: {
       body: {
         type: 'object',
@@ -20,20 +22,25 @@ export async function fleteRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
     const { phone } = request.body as { phone: string };
+    const { companyId } = request.user;
 
-    // 1. Verificamos que el envío exista
+    if (!companyId) {
+      return reply.status(401).send({ error: 'Token de dispositivo inválido. Falta companyId.' });
+    }
+
     const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
     if (!shipment) {
       return reply.status(404).send({ error: 'Envío no encontrado' });
     }
 
-    // 2. Generamos un OTP numérico de 4 dígitos (ej: "4829")
-    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    if (shipment.companyId !== companyId) {
+      request.log.warn(`[SECURITY] Device de company ${companyId} intentó operar sobre shipment de company ${shipment.companyId}`);
+      return reply.status(403).send({ error: 'No tenés permiso para operar sobre este envío.' });
+    }
 
-    // 3. Hasheamos el OTP (igual que hicimos con el archivo) para no guardarlo en texto plano
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
     const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
 
-    // 4. Guardamos el intento en la base de datos
     await prisma.fleteValidation.create({
       data: {
         shipmentId,
@@ -42,22 +49,20 @@ export async function fleteRoutes(fastify: FastifyInstance) {
       }
     });
 
-    // 5. Enviamos el SMS con manejo de errores
     try {
       await sendOTP(phone, otp);
-      
-      // 6. Respondemos al cliente si todo salió bien
       return reply.status(200).send({
         message: 'OTP generado y enviado por SMS exitosamente',
         phone_sent_to: phone
       });
     } catch (error: any) {
-      // Si Twilio falla (timeout o número inválido), devolvemos un 400 Bad Request
       return reply.status(400).send({ error: error.message });
     }
   });
 
-fastify.post('/shipments/:id/confirm-flete', {
+  // POST /shipments/:id/confirm-flete — Fletista ingresa el OTP
+  // Sin autenticación JWT — el fletista no tiene cuenta, el acceso lo controla el OTP
+  fastify.post('/shipments/:id/confirm-flete', {
     schema: {
       body: {
         type: 'object',
@@ -71,14 +76,13 @@ fastify.post('/shipments/:id/confirm-flete', {
     const { id: shipmentId } = request.params as { id: string };
     const { otp } = request.body as { otp: string };
 
-    // 1. Buscar el ÚLTIMO intento de OTP generado para este envío que no haya sido usado
     const latestValidation = await prisma.fleteValidation.findFirst({
       where: {
         shipmentId,
-        validatedAt: null, 
+        validatedAt: null,
       },
       orderBy: {
-        createdAt: 'desc' // Traemos el más reciente por si pidió varios SMS
+        createdAt: 'desc'
       }
     });
 
@@ -86,41 +90,32 @@ fastify.post('/shipments/:id/confirm-flete', {
       return reply.status(400).send({ error: 'No hay un código OTP pendiente para este envío.' });
     }
 
-    // 2. Verificar expiración (10 minutos de vida útil)
     const now = new Date();
     const diffMinutes = (now.getTime() - latestValidation.createdAt.getTime()) / 60000;
-    
+
     if (diffMinutes > 10) {
-      return reply.status(400).send({ error: 'El código OTP ha expirado. Solicite uno nuevo.' });
+      return reply.status(400).send({ error: 'El código OTP ha expirado. Solicitá uno nuevo.' });
     }
 
-    // 3. Hashear el código ingresado por el usuario y compararlo con la base de datos
     const hashedInput = crypto.createHash('sha256').update(otp).digest('hex');
-    
+
     if (hashedInput !== latestValidation.otpCode) {
-      // Retornamos 400 sin cambiar el estado, tal como pide el ticket
       return reply.status(400).send({ error: 'El código OTP es incorrecto.' });
     }
 
-    // 4. ¡Match exitoso! Ejecutamos todo junto en una Transacción
     const transactionResults = await prisma.$transaction([
-      // A) Marcamos el OTP como usado
       prisma.fleteValidation.update({
         where: { id: latestValidation.id },
-        data: { 
+        data: {
           validatedAt: now,
           ipAddress: request.ip
         }
       }),
-      
-      // B) Pasamos el envío a En Tránsito Y PEDIMOS LOS DATOS DE VUELTA
       prisma.shipment.update({
         where: { id: shipmentId },
         data: { status: 'IN_TRANSIT' },
-        select: { receiverEmail: true, trackingCode: true, trackingToken: true } // <-- NUEVO
+        select: { receiverEmail: true, trackingCode: true, trackingToken: true }
       }),
-
-      // C) Dejamos registro en la auditoría
       prisma.auditLog.create({
         data: {
           shipmentId,
@@ -131,22 +126,17 @@ fastify.post('/shipments/:id/confirm-flete', {
       })
     ]);
 
-    // Extraemos el shipment actualizado de la transacción
     const updatedShipment = transactionResults[1];
 
-    // 5. Disparamos el email de forma ASÍNCRONA (sin el await para no demorar la respuesta de la API)
     sendTrackingEmail(
-      updatedShipment.receiverEmail, 
-      updatedShipment.trackingCode, 
+      updatedShipment.receiverEmail,
+      updatedShipment.trackingCode,
       updatedShipment.trackingToken
     );
 
-    // 6. Devolvemos el éxito al frontend
     return reply.status(200).send({
       message: 'Flete validado exitosamente. El envío ya está en tránsito y el email fue enviado.',
       status: 'IN_TRANSIT'
     });
   });
-
-
 }

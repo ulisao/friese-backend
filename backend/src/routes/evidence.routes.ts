@@ -2,7 +2,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { processEvidenceImage } from '../workers/evidenceWorker.js';
-import { linkDisputeEvidence } from '../services/receiver.service.js';
+import { linkDisputeEvidence } from '../services/receiver.js';
 import fs from 'node:fs';
 import util from 'node:util';
 import { pipeline } from 'node:stream';
@@ -25,11 +25,9 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     fs.mkdirSync(uploadDir);
   }
 
-  // ---------------------------------------------------------------------------
-  // POST /shipments/:id/evidence
-  // Evidencia de despacho — sube el operario al momento de crear el envío
-  // ---------------------------------------------------------------------------
+  // POST /shipments/:id/evidence — Evidencia de despacho
   fastify.post('/shipments/:id/evidence', {
+    preHandler: fastify.authenticateDevice,
     config: {
       rateLimit: {
         max: 5,
@@ -38,10 +36,20 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
+    const { companyId } = request.user;
+
+    if (!companyId) {
+      return reply.status(401).send({ error: 'Token de dispositivo inválido. Falta companyId.' });
+    }
 
     const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
     if (!shipment) {
       return reply.status(404).send({ error: 'Envío no encontrado' });
+    }
+
+    if (shipment.companyId !== companyId) {
+      request.log.warn(`[SECURITY] Device de company ${companyId} intentó subir evidencia de shipment de company ${shipment.companyId}`);
+      return reply.status(403).send({ error: 'No tenés permiso para operar sobre este envío.' });
     }
 
     const data = await request.file();
@@ -120,10 +128,7 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // POST /shipments/:id/complaint/photo
-  // Foto de queja del receptor — paso 2 del flujo de disputa
-  // ---------------------------------------------------------------------------
+  // POST /shipments/:id/complaint/photo — Foto de queja del receptor (paso 2 del flujo de disputa)
   fastify.post('/shipments/:id/complaint/photo', {
     config: {
       rateLimit: {
@@ -135,7 +140,6 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const { id: shipmentId } = request.params as { id: string };
     const ipAddress = request.ip;
 
-    // 1. Verificar que existe un DisputeToken activo y no expirado
     const activeToken = await prisma.disputeToken.findFirst({
       where: {
         shipmentId,
@@ -151,7 +155,6 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
       });
     }
 
-    // 2. Recibir y validar el archivo
     const data = await request.file();
     if (!data) {
       return reply.status(400).send({ error: 'No se envió ninguna foto.' });
@@ -180,7 +183,6 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const calculatedHash = await calculateFileHash(filePath);
     const finalFileUrl = `/uploads/${fileName}`;
 
-    // 3. Transacción: quemar el token + crear la Evidence
     const transactionResults = await prisma.$transaction([
       prisma.disputeToken.update({
         where: { id: activeToken.id },
@@ -199,16 +201,12 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
 
     const evidence = transactionResults[1];
 
-    // 4. Flujo completo → registrar ReceiverAction con todo vinculado
     try {
       await linkDisputeEvidence(shipmentId, activeToken.id, evidence.id, ipAddress);
     } catch (err: any) {
-      // Si ya existía un ReceiverAction es un caso raro pero no crítico —
-      // la Evidence ya fue creada y el token quemado, solo logueamos.
       request.log.warn({ err }, `[receiver] linkDisputeEvidence failed for shipment ${shipmentId}`);
     }
 
-    // 5. Procesar imagen de forma asíncrona
     processEvidenceImage(evidence.id, filePath, data.mimetype);
 
     return reply.status(201).send({
