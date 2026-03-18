@@ -6,6 +6,10 @@ datasource db {
   provider = "postgresql"
 }
 
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
 enum ShipmentStatus {
   PENDING_EVIDENCE
   PENDING_FLETE
@@ -16,38 +20,85 @@ enum ShipmentStatus {
   DISPUTE_RESOLVED
 }
 
-model Shipment {
-  id               String            @id @default(uuid()) @db.Uuid
-  trackingCode     String            @unique @map("tracking_code") @db.VarChar(100)
-  trackingToken    String            @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
-  status           ShipmentStatus    @default(PENDING_EVIDENCE)
-  senderId         String?           @map("sender_id") @db.Uuid
-  metadata         Json?
-  receiverEmail    String            @map("receiver_email") @db.VarChar(255)
-  createdAt        DateTime          @default(now()) @map("created_at")
-  updatedAt        DateTime          @updatedAt @map("updated_at")
-  evidence         Evidence[]
-  fleteValidations FleteValidation[]
-  disputeTokens    DisputeToken[]
-  auditLogs        AuditLog[]
-
-  @@map("shipments")
-}
-
 enum EvidenceType {
   DEPARTURE
   COMPLAINT
 }
 
+enum ReceiverActionType {
+  CONFIRMED
+  DISPUTED
+}
+
+// ---------------------------------------------------------------------------
+// Core entities
+// ---------------------------------------------------------------------------
+
+model Company {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.VarChar(255)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  name         String     @db.VarChar(255)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  devices      Device[]
+  shipments    Shipment[]
+
+  @@map("companies")
+}
+
+model Device {
+  id           String     @id @default(uuid()) @db.Uuid
+  companyId    String     @map("company_id") @db.Uuid
+  company      Company    @relation(fields: [companyId], references: [id])
+  operatorName String     @map("operator_name") @db.VarChar(255)
+  tokenHash    String     @map("token_hash") @db.VarChar(64)
+  isActive     Boolean    @default(true) @map("is_active")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  revokedAt    DateTime?  @map("revoked_at")
+  shipments    Shipment[] // envíos creados por este operario
+
+  @@map("devices")
+}
+
+// ---------------------------------------------------------------------------
+// Shipment & related
+// ---------------------------------------------------------------------------
+
+model Shipment {
+  id               String          @id @default(uuid()) @db.Uuid
+  trackingCode     String          @unique @map("tracking_code") @db.VarChar(100)
+  trackingToken    String          @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
+  status           ShipmentStatus  @default(PENDING_EVIDENCE)
+  // Multi-tenancy: todo envío pertenece a una empresa
+  companyId        String          @map("company_id") @db.Uuid
+  company          Company         @relation(fields: [companyId], references: [id])
+  // Operario que creó el envío (nullable: el admin puede crearlo desde el dashboard)
+  createdByDevice  String?         @map("created_by_device") @db.Uuid
+  device           Device?         @relation(fields: [createdByDevice], references: [id])
+  metadata         Json?
+  receiverEmail    String          @map("receiver_email") @db.VarChar(255)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  evidence         Evidence[]
+  fleteValidations FleteValidation[]
+  disputeTokens    DisputeToken[]
+  auditLogs        AuditLog[]
+  receiverAction   ReceiverAction?
+
+  @@map("shipments")
+}
+
 model Evidence {
-  id           String       @id @default(uuid()) @db.Uuid
-  shipmentId   String       @map("shipment_id") @db.Uuid
-  shipment     Shipment     @relation(fields: [shipmentId], references: [id])
-  fileUrl      String       @map("file_url")
-  fileHash     String       @map("file_hash") @db.VarChar(64)
-  metadataJson Json         @map("metadata_json")
-  type         EvidenceType
-  createdAt    DateTime     @default(now()) @map("created_at")
+  id             String          @id @default(uuid()) @db.Uuid
+  shipmentId     String          @map("shipment_id") @db.Uuid
+  shipment       Shipment        @relation(fields: [shipmentId], references: [id])
+  fileUrl        String          @map("file_url")
+  fileHash       String          @map("file_hash") @db.VarChar(64)
+  metadataJson   Json            @map("metadata_json")
+  type           EvidenceType
+  createdAt      DateTime        @default(now()) @map("created_at")
+  receiverAction ReceiverAction?
 
   @@map("evidence")
 }
@@ -66,16 +117,42 @@ model FleteValidation {
 }
 
 model DisputeToken {
-  id          String    @id @default(uuid()) @db.Uuid
-  shipmentId  String    @map("shipment_id") @db.Uuid
-  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
-  visualToken String    @map("visual_token") @db.VarChar(255)
-  generatedAt DateTime  @default(now()) @map("generated_at")
-  expiresAt   DateTime  @map("expires_at") // <-- COPILOT HABÍA BORRADO ESTO
-  usedAt      DateTime? @map("used_at")
+  id             String          @id @default(uuid()) @db.Uuid
+  shipmentId     String          @map("shipment_id") @db.Uuid
+  shipment       Shipment        @relation(fields: [shipmentId], references: [id])
+  visualToken    String          @map("visual_token") @db.VarChar(255)
+  generatedAt    DateTime        @default(now()) @map("generated_at")
+  expiresAt      DateTime        @map("expires_at")
+  usedAt         DateTime?       @map("used_at")
+  receiverAction ReceiverAction?
 
   @@map("dispute_tokens")
 }
+
+// ---------------------------------------------------------------------------
+// Receiver action (nueva entidad)
+// Una sola acción posible por envío — unique en shipmentId
+// ---------------------------------------------------------------------------
+
+model ReceiverAction {
+  id             String             @id @default(uuid()) @db.Uuid
+  shipmentId     String             @unique @map("shipment_id") @db.Uuid
+  shipment       Shipment           @relation(fields: [shipmentId], references: [id])
+  action         ReceiverActionType
+  // Solo presentes si action = DISPUTED
+  disputeTokenId String?            @unique @map("dispute_token_id") @db.Uuid
+  disputeToken   DisputeToken?      @relation(fields: [disputeTokenId], references: [id])
+  evidenceId     String?            @unique @map("evidence_id") @db.Uuid
+  evidence       Evidence?          @relation(fields: [evidenceId], references: [id])
+  ipAddress      String?            @map("ip_address") @db.VarChar(45)
+  createdAt      DateTime           @default(now()) @map("created_at")
+
+  @@map("receiver_actions")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
 
 model AuditLog {
   id         String          @id @default(uuid()) @db.Uuid
@@ -87,29 +164,4 @@ model AuditLog {
   timestamp  DateTime        @default(now())
 
   @@map("audit_logs")
-}
-
-model Device {
-  id           String    @id @default(uuid()) @db.Uuid
-  companyId    String    @map("company_id") @db.Uuid
-  company      Company   @relation(fields: [companyId], references: [id])
-  operatorName String    @map("operator_name") @db.VarChar(255)
-  tokenHash    String    @map("token_hash") @db.VarChar(64)
-  isActive     Boolean   @default(true) @map("is_active")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  revokedAt    DateTime? @map("revoked_at")
-
-  @@map("devices")
-}
-
-model Company {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique @db.VarChar(255)
-  passwordHash String   @map("password_hash") @db.VarChar(255)
-  name         String   @db.VarChar(255)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  devices      Device[]
-
-  @@map("companies")
 }

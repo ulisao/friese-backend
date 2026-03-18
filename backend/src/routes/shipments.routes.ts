@@ -1,11 +1,12 @@
-// src/routes/shipments.routes.ts
+// src/routes/shipment.routes.ts
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { generateUniqueTrackingCode } from '../utils/generateTracking.js';
+import { confirmDelivery, initiateDispute } from '../services/receiver.service.js';
 import crypto from 'node:crypto';
 
 export async function shipmentRoutes(fastify: FastifyInstance) {
-  
+
   // 1. CREAR ENVÍO
   fastify.post('/shipments', {
     schema: {
@@ -34,13 +35,9 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     const newShipment = await prisma.shipment.create({
       data: {
         receiverEmail: email,
-        trackingCode: trackingCode,
-        trackingToken: trackingToken,
-        metadata: {
-          destinatario,
-          lote,
-          cantidad
-        }
+        trackingCode,
+        trackingToken,
+        metadata: { destinatario, lote, cantidad }
       }
     });
 
@@ -65,43 +62,18 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
     const { token } = request.query as { token: string };
+    const ipAddress = request.ip;
 
-    const shipment = await prisma.shipment.findUnique({ 
-      where: { id: shipmentId } 
-    });
-
-    if (!shipment) {
-      return reply.status(404).send({ error: 'Envío no encontrado' });
+    try {
+      const result = await confirmDelivery(shipmentId, token, ipAddress);
+      return reply.status(200).send({
+        message: 'Conformidad registrada. Envío cerrado exitosamente.',
+        ...result
+      });
+    } catch (err: any) {
+      request.log.warn({ err }, `[receiver] confirm failed for shipment ${shipmentId}`);
+      return reply.status(err.statusCode ?? 500).send({ error: err.message });
     }
-
-    if (token !== shipment.trackingToken) {
-      request.log.warn(`[SECURITY] Intento de cierre no autorizado para shipment ${shipmentId}`);
-      return reply.status(401).send({ error: 'No autorizado. Token de confirmación inválido.' });
-    }
-
-    if (shipment.status === 'CLOSED') {
-      return reply.status(400).send({ error: 'El envío ya se encuentra cerrado.' });
-    }
-
-    await prisma.$transaction([
-      prisma.shipment.update({
-        where: { id: shipmentId },
-        data: { status: 'CLOSED' }
-      }),
-      prisma.auditLog.create({
-        data: {
-          shipmentId,
-          fromStatus: shipment.status,
-          toStatus: 'CLOSED',
-          actor: 'cliente_final'
-        }
-      })
-    ]);
-
-    return reply.status(200).send({
-      message: 'Conformidad registrada. Envío cerrado exitosamente.',
-      status: 'CLOSED'
-    });
   });
 
   // 3. INICIAR RECLAMO
@@ -111,57 +83,24 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
         type: 'object',
         required: ['token'],
         properties: {
-          token: { type: 'string' } 
+          token: { type: 'string' }
         }
       }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
-    const { token: trackingToken } = request.query as { token: string };
+    const { token } = request.query as { token: string };
+    const ipAddress = request.ip;
 
-    const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
-
-    if (!shipment) return reply.status(404).send({ error: 'Envío no encontrado' });
-    if (trackingToken !== shipment.trackingToken) return reply.status(401).send({ error: 'No autorizado' });
-    if (shipment.status === 'CLOSED') {
-      return reply.status(400).send({ error: 'No se puede abrir una disputa sobre un envío que ya fue cerrado y entregado.' });
+    try {
+      const result = await initiateDispute(shipmentId, token, ipAddress);
+      return reply.status(200).send({
+        message: 'Disputa iniciada. Escribí el siguiente código en un papel visible junto a la foto del reclamo:',
+        ...result
+      });
+    } catch (err: any) {
+      request.log.warn({ err }, `[receiver] dispute failed for shipment ${shipmentId}`);
+      return reply.status(err.statusCode ?? 500).send({ error: err.message });
     }
-
-    const charset = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-    let visualToken = '';
-    for (let i = 0; i < 4; i++) {
-      visualToken += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-
-    const expiresAt = new Date(Date.now() + 10 * 60000); 
-
-    await prisma.$transaction([
-      prisma.shipment.update({
-        where: { id: shipmentId },
-        data: { status: 'DISPUTE' }
-      }),
-      prisma.disputeToken.create({
-        data: {
-          shipmentId,
-          visualToken: visualToken, 
-          generatedAt: new Date(),
-          expiresAt: expiresAt
-        }
-      }),
-      prisma.auditLog.create({
-        data: {
-          shipmentId,
-          fromStatus: shipment.status,
-          toStatus: 'DISPUTE',
-          actor: 'cliente_final'
-        }
-      })
-    ]);
-
-    return reply.status(200).send({
-      message: 'Disputa iniciada. Por favor, suba una foto del reclamo incluyendo el siguiente código escrito en un papel visible:',
-      visual_token: visualToken,
-      expires_at: expiresAt
-    });
   });
 }
