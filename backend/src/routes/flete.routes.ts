@@ -121,7 +121,7 @@ export async function fleteRoutes(fastify: FastifyInstance) {
           shipmentId,
           fromStatus: 'PENDING_FLETE',
           toStatus: 'IN_TRANSIT',
-          actor: 'operario_en_planta'
+          actor: request.deviceId ?? 'operario_en_planta'
         }
       })
     ]);

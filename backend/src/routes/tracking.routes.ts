@@ -1,65 +1,93 @@
 // src/routes/tracking.routes.ts
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
-import { generateSignedUrl } from '../services/storage';
+import { generateSignedUrl } from '../services/storage.js';
 
 export async function trackingRoutes(fastify: FastifyInstance) {
-  
+
   fastify.get('/tracking/:code', async (request, reply) => {
     const { code } = request.params as { code: string };
     const { token } = request.query as { token?: string };
 
-    // 1. Buscamos el envío y nos traemos las evidencias y la auditoría
     const shipment = await prisma.shipment.findUnique({
       where: { trackingCode: code },
       include: {
-        evidence: true,
+        items: {
+          include: {
+            evidence: {
+              where: { type: 'DEPARTURE' },
+              orderBy: { createdAt: 'asc' }
+            }
+          }
+        },
+        evidence: {
+          where: { type: 'COMPLAINT' } // fotos de queja del receptor
+        },
         auditLogs: {
-          orderBy: { timestamp: 'desc' } // Traemos el historial ordenado del más nuevo al más viejo
+          orderBy: { timestamp: 'desc' }
         }
       }
     });
 
     if (!shipment) {
-      return reply.status(404).send({ error: 'Envío no encontrado' });
+      return reply.status(404).send({ error: 'Envío no encontrado.' });
     }
 
-    // 2. Validación de Seguridad (Ticket 19)
     if (!token || token !== shipment.trackingToken) {
       request.log.warn(`[SECURITY] Intento de acceso no autorizado al tracking ${code}`);
       return reply.status(401).send({ error: 'No autorizado. Token de seguimiento inválido o ausente.' });
     }
 
-    // 3. Generar URLs Firmadas (Signed URLs) para las fotos/videos
-    // Como las fotos están privadas en Cloudflare R2, generamos un link que expira en 1 hora.
-    const evidenceWithUrls = await Promise.all(shipment.evidence.map(async (ev) => {
-      let temporalUrl = ev.fileUrl;
-      
-      // Si la URL es un path de R2 (ej: shipments/2026-03/...) le generamos la firma
-      if (temporalUrl && temporalUrl.startsWith('shipments/')) {
-        temporalUrl = await generateSignedUrl(temporalUrl, 3600);
-      } else if (temporalUrl && temporalUrl.startsWith('/uploads/')) {
-        // Fallback: Si todavía es un archivo local (porque no configuraste R2 aún), armamos la URL local
-        temporalUrl = `http://localhost:3000${temporalUrl}`;
-      }
+    // Generar signed URLs para las fotos de cada item
+    const itemsWithUrls = await Promise.all(
+      shipment.items.map(async (item) => {
+        const evidenceWithUrls = await Promise.all(
+          item.evidence.map(async (ev) => {
+            let url = ev.fileUrl;
+            if (url.startsWith('shipments/')) {
+              url = await generateSignedUrl(url, 3600);
+            } else if (url.startsWith('/uploads/')) {
+              url = `http://localhost:3000${url}`;
+            }
+            return { id: ev.id, url, hash: ev.fileHash, createdAt: ev.createdAt };
+          })
+        );
 
-      return {
-        id: ev.id,
-        type: ev.type,
-        url: temporalUrl, // Entregamos la URL firmada o local lista para usar
-        createdAt: ev.createdAt
-      };
-    }));
+        return {
+          id:          item.id,
+          descripcion: item.descripcion,
+          lote:        item.lote,
+          cantidad:    item.cantidad,
+          marca:       item.marca,
+          material:    item.material,
+          evidence:    evidenceWithUrls
+        };
+      })
+    );
 
-    // 4. Armamos el paquete de respuesta final
+    // Signed URLs para fotos de queja (si hay disputa)
+    const complaintEvidenceWithUrls = await Promise.all(
+      shipment.evidence.map(async (ev) => {
+        let url = ev.fileUrl;
+        if (url.startsWith('shipments/')) {
+          url = await generateSignedUrl(url, 3600);
+        } else if (url.startsWith('/uploads/')) {
+          url = `http://localhost:3000${url}`;
+        }
+        return { id: ev.id, url, hash: ev.fileHash, createdAt: ev.createdAt };
+      })
+    );
+
     return reply.status(200).send({
-      id: shipment.id,
-      tracking_code: shipment.trackingCode,
-      status: shipment.status,
-      metadata: shipment.metadata,
-      created_at: shipment.createdAt,
-      evidence: evidenceWithUrls,
-      audit_logs: shipment.auditLogs
+      id:               shipment.id,
+      tracking_code:    shipment.trackingCode,
+      status:           shipment.status,
+      destinatario:     shipment.destinatario,
+      metadata:         shipment.metadata,
+      created_at:       shipment.createdAt,
+      items:            itemsWithUrls,
+      complaint_evidence: complaintEvidenceWithUrls,
+      audit_logs:       shipment.auditLogs
     });
   });
 }

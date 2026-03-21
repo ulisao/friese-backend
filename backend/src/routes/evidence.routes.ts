@@ -25,36 +25,52 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     fs.mkdirSync(uploadDir);
   }
 
-  // POST /shipments/:id/evidence — Evidencia de despacho
+  // ---------------------------------------------------------------------------
+  // POST /shipments/:id/evidence?itemId=<uuid>
+  // Evidencia de despacho — el operario sube una foto por cada producto
+  // itemId es obligatorio: indica a qué ShipmentItem pertenece esta foto
+  // ---------------------------------------------------------------------------
   fastify.post('/shipments/:id/evidence', {
     preHandler: fastify.authenticateDevice,
     config: {
       rateLimit: {
-        max: 5,
+        max: 20, // subió de 5 — ahora puede haber N productos × N fotos
         timeWindow: '10 minute'
       }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
+    const { itemId } = request.query as { itemId?: string };
     const { companyId } = request.user;
 
     if (!companyId) {
       return reply.status(401).send({ error: 'Token de dispositivo inválido. Falta companyId.' });
     }
 
-    const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
-    if (!shipment) {
-      return reply.status(404).send({ error: 'Envío no encontrado' });
+    if (!itemId) {
+      return reply.status(400).send({ error: 'El parámetro itemId es obligatorio para evidencia de despacho.' });
     }
 
+    const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
+    if (!shipment) {
+      return reply.status(404).send({ error: 'Envío no encontrado.' });
+    }
+
+    // Multi-tenancy: el operario no puede subir evidencia de otra empresa
     if (shipment.companyId !== companyId) {
       request.log.warn(`[SECURITY] Device de company ${companyId} intentó subir evidencia de shipment de company ${shipment.companyId}`);
       return reply.status(403).send({ error: 'No tenés permiso para operar sobre este envío.' });
     }
 
+    // Verificar que el item pertenece a este shipment
+    const item = await prisma.shipmentItem.findUnique({ where: { id: itemId } });
+    if (!item || item.shipmentId !== shipmentId) {
+      return reply.status(404).send({ error: 'Producto no encontrado en este envío.' });
+    }
+
     const data = await request.file();
     if (!data) {
-      return reply.status(400).send({ error: 'No se envió ningún archivo' });
+      return reply.status(400).send({ error: 'No se envió ningún archivo.' });
     }
 
     if (!data.mimetype.startsWith('image/') && !data.mimetype.startsWith('video/')) {
@@ -67,23 +83,16 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const metadataRaw = data.fields.metadata && 'value' in data.fields.metadata
       ? data.fields.metadata.value as string
       : '{}';
-    const evidenceTypeRaw = data.fields.type && 'value' in data.fields.type
-      ? data.fields.type.value as string
-      : 'DEPARTURE';
 
     let metadata = {};
     try {
       metadata = JSON.parse(metadataRaw);
     } catch {
-      return reply.status(400).send({ error: 'El campo metadata debe ser un JSON válido' });
+      return reply.status(400).send({ error: 'El campo metadata debe ser un JSON válido.' });
     }
 
     if (!hash) {
-      return reply.status(400).send({ error: 'El hash SHA-256 es obligatorio' });
-    }
-
-    if (evidenceTypeRaw !== 'DEPARTURE' && evidenceTypeRaw !== 'COMPLAINT') {
-      return reply.status(400).send({ error: 'El campo type debe ser DEPARTURE o COMPLAINT' });
+      return reply.status(400).send({ error: 'El hash SHA-256 es obligatorio.' });
     }
 
     const fileName = `${Date.now()}-${data.filename}`;
@@ -104,7 +113,7 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const calculatedHash = await calculateFileHash(filePath);
     if (calculatedHash !== hash) {
       fs.unlinkSync(filePath);
-      request.log.warn(`[SECURITY] Hash mismatch en evidencia para shipment ${shipmentId}`);
+      request.log.warn(`[SECURITY] Hash mismatch en evidencia para shipment ${shipmentId}, item ${itemId}`);
       return reply.status(422).send({
         error: 'Error de integridad: el hash del archivo no coincide.'
       });
@@ -113,22 +122,28 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     const evidence = await prisma.evidence.create({
       data: {
         shipmentId,
+        shipmentItemId: itemId,   // vinculado al producto específico
         fileUrl: `/uploads/${fileName}`,
         fileHash: String(hash),
         metadataJson: metadata,
-        type: evidenceTypeRaw as 'DEPARTURE' | 'COMPLAINT'
+        type: 'DEPARTURE'         // esta ruta es siempre evidencia de despacho
       }
     });
 
     processEvidenceImage(evidence.id, filePath, data.mimetype);
 
     return reply.status(202).send({
-      message: 'Evidencia recibida y verificada exitosamente',
-      evidence_id: evidence.id
+      message: 'Evidencia recibida y verificada exitosamente.',
+      evidence_id: evidence.id,
+      item_id: itemId
     });
   });
 
-  // POST /shipments/:id/complaint/photo — Foto de queja del receptor (paso 2 del flujo de disputa)
+  // ---------------------------------------------------------------------------
+  // POST /shipments/:id/complaint/photo
+  // Foto de queja del receptor — aplica al envío completo, no a un item
+  // Sin autenticación JWT — acceso controlado por el disputeToken activo
+  // ---------------------------------------------------------------------------
   fastify.post('/shipments/:id/complaint/photo', {
     config: {
       rateLimit: {
@@ -191,6 +206,7 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
       prisma.evidence.create({
         data: {
           shipmentId,
+          shipmentItemId: null,  // queja del receptor — aplica al envío completo
           fileUrl: finalFileUrl,
           fileHash: calculatedHash,
           metadataJson: { source: 'complaint_flow', visual_token: activeToken.visualToken },

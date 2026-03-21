@@ -56,7 +56,7 @@ model Device {
   isActive     Boolean    @default(true) @map("is_active")
   createdAt    DateTime   @default(now()) @map("created_at")
   revokedAt    DateTime?  @map("revoked_at")
-  shipments    Shipment[] // envíos creados por este operario
+  shipments    Shipment[]
 
   @@map("devices")
 }
@@ -70,17 +70,19 @@ model Shipment {
   trackingCode     String          @unique @map("tracking_code") @db.VarChar(100)
   trackingToken    String          @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
   status           ShipmentStatus  @default(PENDING_EVIDENCE)
-  // Multi-tenancy: todo envío pertenece a una empresa
   companyId        String          @map("company_id") @db.Uuid
   company          Company         @relation(fields: [companyId], references: [id])
-  // Operario que creó el envío (nullable: el admin puede crearlo desde el dashboard)
   createdByDevice  String?         @map("created_by_device") @db.Uuid
   device           Device?         @relation(fields: [createdByDevice], references: [id])
-  metadata         Json?
+  // Datos del destinatario — fuera de metadata para poder filtrar/buscar
   receiverEmail    String          @map("receiver_email") @db.VarChar(255)
+  destinatario     String          @db.VarChar(255)
+  // Metadata libre para campos adicionales que las empresas quieran agregar
+  metadata         Json?
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
-  evidence         Evidence[]
+  items            ShipmentItem[]
+  evidence         Evidence[]      // solo evidencia de tipo COMPLAINT (queja del receptor)
   fleteValidations FleteValidation[]
   disputeTokens    DisputeToken[]
   auditLogs        AuditLog[]
@@ -89,15 +91,34 @@ model Shipment {
   @@map("shipments")
 }
 
+// Cada producto dentro de un envío
+model ShipmentItem {
+  id          String     @id @default(uuid()) @db.Uuid
+  shipmentId  String     @map("shipment_id") @db.Uuid
+  shipment    Shipment   @relation(fields: [shipmentId], references: [id])
+  descripcion String     @db.VarChar(255)
+  lote        String?    @db.VarChar(100)
+  cantidad    Int
+  marca       String?    @db.VarChar(100) // proveedor o marca del producto
+  material    String?    @db.VarChar(100)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  evidence    Evidence[] // fotos de despacho de este item específico
+
+  @@map("shipment_items")
+}
+
 model Evidence {
-  id             String          @id @default(uuid()) @db.Uuid
-  shipmentId     String          @map("shipment_id") @db.Uuid
-  shipment       Shipment        @relation(fields: [shipmentId], references: [id])
-  fileUrl        String          @map("file_url")
-  fileHash       String          @map("file_hash") @db.VarChar(64)
-  metadataJson   Json            @map("metadata_json")
+  id             String        @id @default(uuid()) @db.Uuid
+  shipmentId     String        @map("shipment_id") @db.Uuid
+  shipment       Shipment      @relation(fields: [shipmentId], references: [id])
+  // Nullable: presente para DEPARTURE (foto del item), null para COMPLAINT (queja general)
+  shipmentItemId String?       @map("shipment_item_id") @db.Uuid
+  shipmentItem   ShipmentItem? @relation(fields: [shipmentItemId], references: [id])
+  fileUrl        String        @map("file_url")
+  fileHash       String        @map("file_hash") @db.VarChar(64)
+  metadataJson   Json          @map("metadata_json")
   type           EvidenceType
-  createdAt      DateTime        @default(now()) @map("created_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
   receiverAction ReceiverAction?
 
   @@map("evidence")
@@ -129,17 +150,11 @@ model DisputeToken {
   @@map("dispute_tokens")
 }
 
-// ---------------------------------------------------------------------------
-// Receiver action (nueva entidad)
-// Una sola acción posible por envío — unique en shipmentId
-// ---------------------------------------------------------------------------
-
 model ReceiverAction {
   id             String             @id @default(uuid()) @db.Uuid
   shipmentId     String             @unique @map("shipment_id") @db.Uuid
   shipment       Shipment           @relation(fields: [shipmentId], references: [id])
   action         ReceiverActionType
-  // Solo presentes si action = DISPUTED
   disputeTokenId String?            @unique @map("dispute_token_id") @db.Uuid
   disputeToken   DisputeToken?      @relation(fields: [disputeTokenId], references: [id])
   evidenceId     String?            @unique @map("evidence_id") @db.Uuid
@@ -149,10 +164,6 @@ model ReceiverAction {
 
   @@map("receiver_actions")
 }
-
-// ---------------------------------------------------------------------------
-// Audit log
-// ---------------------------------------------------------------------------
 
 model AuditLog {
   id         String          @id @default(uuid()) @db.Uuid

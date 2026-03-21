@@ -1,16 +1,19 @@
 // src/services/email.ts
 import { Resend } from 'resend';
 
-// Inicializamos el cliente con la variable de entorno
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+const FROM = 'Friese Logística <onboarding@resend.dev>';
+
+// ---------------------------------------------------------------------------
+// Email al receptor — notifica que su envío está en tránsito
+// ---------------------------------------------------------------------------
 export async function sendTrackingEmail(to: string, trackingCode: string, trackingToken: string) {
-  // En producción esto apuntaría a tu frontend en Vercel/Netlify
-  const trackingLink = `http://localhost:3000/tracking/${trackingCode}?token=${trackingToken}`;
+  const trackingLink = `${process.env.FRONTEND_URL}/tracking/${trackingCode}?token=${trackingToken}`;
 
   try {
     const data = await resend.emails.send({
-      from: 'Friese Logística <onboarding@resend.dev>', // Resend te da este mail temporal para pruebas
+      from: FROM,
       to: [to],
       subject: '📦 Tu envío está en camino - Friese',
       html: `
@@ -20,19 +23,82 @@ export async function sendTrackingEmail(to: string, trackingCode: string, tracki
           <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <p style="margin: 0;"><strong>Código de seguimiento:</strong> ${trackingCode}</p>
           </div>
-          <p>Podés seguir el estado de tu paquete en tiempo real y ver las evidencias haciendo clic en el siguiente enlace seguro:</p>
+          <p>Podés seguir el estado de tu paquete en tiempo real haciendo clic en el siguiente enlace:</p>
           <a href="${trackingLink}" style="display: inline-block; padding: 12px 24px; background-color: #000; color: #fff; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">Rastrear mi envío</a>
           <p style="margin-top: 30px; font-size: 12px; color: #666;">
-            Si el botón no funciona, ingresá a nuestro portal con tu código y este token de seguridad temporal: <code>${trackingToken}</code>
+            Si el botón no funciona, ingresá con este token: <code>${trackingToken}</code>
           </p>
         </div>
       `
     });
-    console.log(`[EMAIL] Correo de tracking enviado a ${to} (ID: ${data.data?.id})`);
+    console.log(`[EMAIL] Tracking enviado a ${to} (ID: ${data.data?.id})`);
     return data;
   } catch (error) {
-    console.error('[EMAIL ERROR] Falló el envío del correo:', error);
-    // No hacemos throw error porque no queremos que el cliente vea un error 500
-    // si falla el mail, el paquete ya está en tránsito igual.
+    console.error('[EMAIL ERROR] Falló el envío del correo de tracking:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Email a la empresa — receptor dio conformidad
+// ---------------------------------------------------------------------------
+export async function sendConfirmationNotification(
+  to: string,
+  trackingCode: string,
+  destinatario: string
+) {
+  try {
+    const data = await resend.emails.send({
+      from: FROM,
+      to: [to],
+      subject: `✅ Envío ${trackingCode} confirmado por el receptor`,
+      html: `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 10px;">
+          <h2 style="color: #000;">Entrega confirmada ✅</h2>
+          <p><strong>${destinatario}</strong> confirmó la recepción conforme de su envío.</p>
+          <div style="background-color: #f0faf0; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #22c55e;">
+            <p style="margin: 0;"><strong>Código de envío:</strong> ${trackingCode}</p>
+            <p style="margin: 8px 0 0;"><strong>Estado:</strong> Cerrado</p>
+          </div>
+          <p style="font-size: 13px; color: #666;">Podés ver el detalle completo y las evidencias desde tu panel de Friese.</p>
+        </div>
+      `
+    });
+    console.log(`[EMAIL] Confirmación enviada a empresa ${to} (ID: ${data.data?.id})`);
+    return data;
+  } catch (error) {
+    console.error('[EMAIL ERROR] Falló el envío de notificación de confirmación:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Email a la empresa — receptor levantó una queja
+// ---------------------------------------------------------------------------
+export async function sendDisputeNotification(
+  to: string,
+  trackingCode: string,
+  destinatario: string
+) {
+  try {
+    const data = await resend.emails.send({
+      from: FROM,
+      to: [to],
+      subject: `⚠️ Reclamo recibido en envío ${trackingCode}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 10px;">
+          <h2 style="color: #000;">Reclamo recibido ⚠️</h2>
+          <p><strong>${destinatario}</strong> reportó un problema con la recepción de su envío.</p>
+          <div style="background-color: #fff8f0; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f97316;">
+            <p style="margin: 0;"><strong>Código de envío:</strong> ${trackingCode}</p>
+            <p style="margin: 8px 0 0;"><strong>Estado:</strong> En disputa</p>
+          </div>
+          <p>El receptor adjuntó una foto como evidencia del reclamo. Podés verla junto al token visual de verificación desde tu panel de Friese.</p>
+          <p style="font-size: 13px; color: #666;">Te recomendamos contactar al receptor a la brevedad para resolver la situación.</p>
+        </div>
+      `
+    });
+    console.log(`[EMAIL] Notificación de disputa enviada a empresa ${to} (ID: ${data.data?.id})`);
+    return data;
+  } catch (error) {
+    console.error('[EMAIL ERROR] Falló el envío de notificación de disputa:', error);
   }
 }
