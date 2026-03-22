@@ -4,17 +4,10 @@ import { validateTransition } from '../utils/stateMachine.js';
 import { sendConfirmationNotification, sendDisputeNotification } from './email.js';
 import type { ShipmentStatus } from '@prisma/client';
 
-// ---------------------------------------------------------------------------
-// Helpers internos
-// ---------------------------------------------------------------------------
-
 async function validateReceiverAccess(shipmentId: string, trackingToken: string) {
   const shipment = await prisma.shipment.findUnique({
     where: { id: shipmentId },
-    include: {
-      receiverAction: true,
-      company: true        // necesario para notificar al admin
-    }
+    include: { receiverAction: true, company: true }
   });
 
   if (!shipment) {
@@ -57,14 +50,6 @@ async function transitionStatus(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Casos de uso públicos
-// ---------------------------------------------------------------------------
-
-/**
- * Caso: receptor da conformidad.
- * Crea ReceiverAction { CONFIRMED }, cierra el envío y notifica a la empresa.
- */
 export async function confirmDelivery(
   shipmentId: string,
   trackingToken: string,
@@ -74,31 +59,22 @@ export async function confirmDelivery(
 
   await prisma.$transaction(async (tx) => {
     await transitionStatus(tx, shipmentId, shipment.status, 'CLOSED', 'receptor');
-
     await tx.receiverAction.create({
-      data: {
-        shipmentId,
-        action: 'CONFIRMED',
-        ipAddress: ipAddress ?? null
-      }
+      data: { shipmentId, action: 'CONFIRMED', ipAddress: ipAddress ?? null }
     });
   });
 
-  // Notificación a la empresa — fire and forget, igual que sendTrackingEmail
+  // companyId pasado para metering dentro de sendConfirmationNotification
   sendConfirmationNotification(
     shipment.company.email,
     shipment.trackingCode,
-    shipment.destinatario
+    shipment.destinatario,
+    shipment.companyId
   );
 
   return { status: 'CLOSED' };
 }
 
-/**
- * Caso: receptor inicia disputa (paso 1 de 2).
- * Genera DisputeToken y transiciona el estado.
- * La notificación a la empresa se dispara en el paso 2 cuando el flujo está completo.
- */
 export async function initiateDispute(
   shipmentId: string,
   trackingToken: string,
@@ -122,7 +98,6 @@ export async function initiateDispute(
 
   const disputeToken = await prisma.$transaction(async (tx) => {
     await transitionStatus(tx, shipmentId, shipment.status, 'DISPUTE', 'receptor');
-
     return tx.disputeToken.create({
       data: { shipmentId, visualToken, expiresAt }
     });
@@ -137,19 +112,13 @@ export async function initiateDispute(
   };
 }
 
-/**
- * Caso: receptor sube la foto de queja (paso 2 de 2).
- * Crea ReceiverAction con todo vinculado y notifica a la empresa.
- */
 export async function linkDisputeEvidence(
   shipmentId: string,
   disputeTokenId: string,
   evidenceId: string,
   ipAddress?: string
 ) {
-  const existing = await prisma.receiverAction.findUnique({
-    where: { shipmentId }
-  });
+  const existing = await prisma.receiverAction.findUnique({ where: { shipmentId } });
 
   if (existing) {
     const err = new Error('Ya existe una acción registrada para este envío.');
@@ -158,27 +127,20 @@ export async function linkDisputeEvidence(
   }
 
   await prisma.receiverAction.create({
-    data: {
-      shipmentId,
-      action: 'DISPUTED',
-      disputeTokenId,
-      evidenceId,
-      ipAddress: ipAddress ?? null
-    }
+    data: { shipmentId, action: 'DISPUTED', disputeTokenId, evidenceId, ipAddress: ipAddress ?? null }
   });
 
-  // Traemos los datos para la notificación
   const shipment = await prisma.shipment.findUnique({
     where: { id: shipmentId },
     include: { company: true }
   });
 
   if (shipment) {
-    // Notificación a la empresa — fire and forget
     sendDisputeNotification(
       shipment.company.email,
       shipment.trackingCode,
-      shipment.destinatario
+      shipment.destinatario,
+      shipment.companyId
     );
   }
 }

@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { generateUniqueTrackingCode } from '../utils/generateTracking.js';
 import { confirmDelivery, initiateDispute } from '../services/receiver.js';
+import { trackShipmentCreated } from '../services/usage.js';
+import { sendTrackingEmail } from '../services/email.js';
 import crypto from 'node:crypto';
 
 type ProductoInput = {
@@ -15,7 +17,7 @@ type ProductoInput = {
 
 export async function shipmentRoutes(fastify: FastifyInstance) {
 
-  // POST /shipments — Crear envío con uno o más productos
+  // POST /shipments — Crear envío
   fastify.post('/shipments', {
     preHandler: fastify.authenticateDevice,
     schema: {
@@ -59,7 +61,6 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     const trackingCode = await generateUniqueTrackingCode();
     const trackingToken = crypto.randomUUID();
 
-    // Creamos el Shipment y todos sus items en una sola transacción
     const shipment = await prisma.$transaction(async (tx) => {
       const newShipment = await tx.shipment.create({
         data: {
@@ -83,7 +84,6 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
         }))
       });
 
-      // Traemos los items creados para devolver sus IDs al frontend
       const items = await tx.shipmentItem.findMany({
         where: { shipmentId: newShipment.id },
         select: { id: true, descripcion: true, cantidad: true }
@@ -92,12 +92,84 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       return { ...newShipment, items };
     });
 
-    // El frontend usa los item IDs para asociar cada foto al producto correcto
+    trackShipmentCreated(companyId, shipment.id);
+
     return reply.status(201).send({
       shipment_id:    shipment.id,
       tracking_code:  shipment.trackingCode,
       tracking_token: shipment.trackingToken,
       items:          shipment.items
+    });
+  });
+
+  // POST /shipments/:id/finalize — Operario finaliza la carga
+  // Transiciona a IN_TRANSIT y dispara el email al receptor
+  fastify.post('/shipments/:id/finalize', {
+    preHandler: fastify.authenticateDevice
+  }, async (request, reply) => {
+    const { id: shipmentId } = request.params as { id: string };
+    const { companyId } = request.user;
+
+    if (!companyId) {
+      return reply.status(401).send({ error: 'Token de dispositivo inválido. Falta companyId.' });
+    }
+
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId }
+    });
+
+    if (!shipment) {
+      return reply.status(404).send({ error: 'Envío no encontrado.' });
+    }
+
+    if (shipment.companyId !== companyId) {
+      request.log.warn(`[SECURITY] Device de company ${companyId} intentó finalizar shipment de company ${shipment.companyId}`);
+      return reply.status(403).send({ error: 'No tenés permiso para operar sobre este envío.' });
+    }
+
+    if (shipment.status !== 'PENDING_EVIDENCE') {
+      return reply.status(400).send({
+        error: `El envío no puede finalizarse desde el estado ${shipment.status}.`
+      });
+    }
+
+    // Verificar que al menos un item tiene evidencia — no se puede despachar sin fotos
+    const itemsWithEvidence = await prisma.evidence.findFirst({
+      where: { shipmentId, type: 'DEPARTURE' }
+    });
+
+    if (!itemsWithEvidence) {
+      return reply.status(400).send({
+        error: 'No se puede finalizar el envío sin al menos una foto de evidencia.'
+      });
+    }
+
+    await prisma.$transaction([
+      prisma.shipment.update({
+        where: { id: shipmentId },
+        data: { status: 'IN_TRANSIT' }
+      }),
+      prisma.auditLog.create({
+        data: {
+          shipmentId,
+          fromStatus: 'PENDING_EVIDENCE',
+          toStatus:   'IN_TRANSIT',
+          actor:      request.deviceId ?? companyId
+        }
+      })
+    ]);
+
+    // Email al receptor — fire and forget
+    sendTrackingEmail(
+      shipment.receiverEmail,
+      shipment.trackingCode,
+      shipment.trackingToken,
+      shipment.companyId
+    );
+
+    return reply.status(200).send({
+      message: 'Envío finalizado. El receptor fue notificado por email.',
+      status: 'IN_TRANSIT'
     });
   });
 
@@ -107,18 +179,15 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       querystring: {
         type: 'object',
         required: ['token'],
-        properties: {
-          token: { type: 'string' }
-        }
+        properties: { token: { type: 'string' } }
       }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
     const { token } = request.query as { token: string };
-    const ipAddress = request.ip;
 
     try {
-      const result = await confirmDelivery(shipmentId, token, ipAddress);
+      const result = await confirmDelivery(shipmentId, token, request.ip);
       return reply.status(200).send({
         message: 'Conformidad registrada. Envío cerrado exitosamente.',
         ...result
@@ -135,18 +204,15 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       querystring: {
         type: 'object',
         required: ['token'],
-        properties: {
-          token: { type: 'string' }
-        }
+        properties: { token: { type: 'string' } }
       }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
     const { token } = request.query as { token: string };
-    const ipAddress = request.ip;
 
     try {
-      const result = await initiateDispute(shipmentId, token, ipAddress);
+      const result = await initiateDispute(shipmentId, token, request.ip);
       return reply.status(200).send({
         message: 'Disputa iniciada. Escribí el siguiente código en un papel visible junto a la foto del reclamo:',
         ...result

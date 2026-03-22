@@ -3,11 +3,11 @@ import Fastify from 'fastify';
 import { prisma } from './db.js';
 import { jwtPlugin } from './plugins/jwt.plugin.js';
 import { authRoutes } from './routes/auth.routes.js';
-import { shipmentRoutes } from './routes/shipments.routes.js';
+import { shipmentRoutes } from './routes/shipment.routes.js';
 import { evidenceRoutes } from './routes/evidence.routes.js';
-import { fleteRoutes } from './routes/flete.routes.js';
 import { trackingRoutes } from './routes/tracking.routes.js';
 import { devicesRoutes } from './routes/admin/devices.routes.js';
+import { superadminRoutes } from './routes/superadmin/superadmin.routes.js';
 import multipart from '@fastify/multipart';
 import fastifyRateLimit from '@fastify/rate-limit';
 
@@ -29,13 +29,10 @@ const start = async () => {
     await prisma.$connect();
     fastify.log.info('Conexión a PostgreSQL (Supabase) exitosa');
 
-    // Plugins — deben registrarse antes que las rutas
     await fastify.register(jwtPlugin);
 
     fastify.register(multipart, {
-      limits: {
-        fileSize: 50 * 1024 * 1024
-      }
+      limits: { fileSize: 50 * 1024 * 1024 }
     });
 
     fastify.register(fastifyRateLimit, {
@@ -44,13 +41,12 @@ const start = async () => {
       timeWindow: '10 minute'
     });
 
-    // Rutas
     fastify.register(authRoutes);
     fastify.register(shipmentRoutes);
     fastify.register(evidenceRoutes);
-    fastify.register(fleteRoutes);
     fastify.register(trackingRoutes);
     fastify.register(devicesRoutes);
+    fastify.register(superadminRoutes);
 
     await fastify.listen({ port: 3000 });
   } catch (err) {

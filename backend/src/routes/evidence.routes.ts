@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import { processEvidenceImage } from '../workers/evidenceWorker.js';
 import { linkDisputeEvidence } from '../services/receiver.js';
+import { trackEvidenceUploaded } from '../services/usage.js';
 import fs from 'node:fs';
 import util from 'node:util';
 import { pipeline } from 'node:stream';
@@ -21,22 +22,13 @@ const allowedMimes = [
 
 export async function evidenceRoutes(fastify: FastifyInstance) {
   const uploadDir = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
-  }
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-  // ---------------------------------------------------------------------------
   // POST /shipments/:id/evidence?itemId=<uuid>
-  // Evidencia de despacho — el operario sube una foto por cada producto
-  // itemId es obligatorio: indica a qué ShipmentItem pertenece esta foto
-  // ---------------------------------------------------------------------------
   fastify.post('/shipments/:id/evidence', {
     preHandler: fastify.authenticateDevice,
     config: {
-      rateLimit: {
-        max: 20, // subió de 5 — ahora puede haber N productos × N fotos
-        timeWindow: '10 minute'
-      }
+      rateLimit: { max: 20, timeWindow: '10 minute' }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
@@ -48,7 +40,7 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     }
 
     if (!itemId) {
-      return reply.status(400).send({ error: 'El parámetro itemId es obligatorio para evidencia de despacho.' });
+      return reply.status(400).send({ error: 'El parámetro itemId es obligatorio.' });
     }
 
     const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } });
@@ -56,33 +48,26 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Envío no encontrado.' });
     }
 
-    // Multi-tenancy: el operario no puede subir evidencia de otra empresa
     if (shipment.companyId !== companyId) {
       request.log.warn(`[SECURITY] Device de company ${companyId} intentó subir evidencia de shipment de company ${shipment.companyId}`);
       return reply.status(403).send({ error: 'No tenés permiso para operar sobre este envío.' });
     }
 
-    // Verificar que el item pertenece a este shipment
     const item = await prisma.shipmentItem.findUnique({ where: { id: itemId } });
     if (!item || item.shipmentId !== shipmentId) {
       return reply.status(404).send({ error: 'Producto no encontrado en este envío.' });
     }
 
     const data = await request.file();
-    if (!data) {
-      return reply.status(400).send({ error: 'No se envió ningún archivo.' });
-    }
+    if (!data) return reply.status(400).send({ error: 'No se envió ningún archivo.' });
 
     if (!data.mimetype.startsWith('image/') && !data.mimetype.startsWith('video/')) {
       return reply.status(400).send({ error: 'Tipo de archivo inválido. Solo imágenes o videos.' });
     }
 
-    const hash = data.fields.hash && 'value' in data.fields.hash
-      ? data.fields.hash.value
-      : '';
+    const hash = data.fields.hash && 'value' in data.fields.hash ? data.fields.hash.value : '';
     const metadataRaw = data.fields.metadata && 'value' in data.fields.metadata
-      ? data.fields.metadata.value as string
-      : '{}';
+      ? data.fields.metadata.value as string : '{}';
 
     let metadata = {};
     try {
@@ -91,9 +76,7 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'El campo metadata debe ser un JSON válido.' });
     }
 
-    if (!hash) {
-      return reply.status(400).send({ error: 'El hash SHA-256 es obligatorio.' });
-    }
+    if (!hash) return reply.status(400).send({ error: 'El hash SHA-256 es obligatorio.' });
 
     const fileName = `${Date.now()}-${data.filename}`;
     const filePath = path.join(uploadDir, fileName);
@@ -104,31 +87,34 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
 
     if (!realFileType || !allowedMimes.includes(realFileType.mime)) {
       fs.unlinkSync(filePath);
-      request.log.warn(`[SECURITY] Intento de subida rechazado. MIME real: ${realFileType?.mime ?? 'desconocido'}`);
-      return reply.status(415).send({
-        error: 'Unsupported Media Type. El archivo está corrupto o tiene una extensión falsa.'
-      });
+      request.log.warn(`[SECURITY] MIME real rechazado: ${realFileType?.mime ?? 'desconocido'}`);
+      return reply.status(415).send({ error: 'Unsupported Media Type. El archivo está corrupto o tiene extensión falsa.' });
     }
 
     const calculatedHash = await calculateFileHash(filePath);
     if (calculatedHash !== hash) {
       fs.unlinkSync(filePath);
-      request.log.warn(`[SECURITY] Hash mismatch en evidencia para shipment ${shipmentId}, item ${itemId}`);
-      return reply.status(422).send({
-        error: 'Error de integridad: el hash del archivo no coincide.'
-      });
+      request.log.warn(`[SECURITY] Hash mismatch para shipment ${shipmentId}, item ${itemId}`);
+      return reply.status(422).send({ error: 'Error de integridad: el hash del archivo no coincide.' });
     }
+
+    // Tamaño del archivo para metering de storage
+    const { size: fileSizeBytes } = fs.statSync(filePath);
 
     const evidence = await prisma.evidence.create({
       data: {
         shipmentId,
-        shipmentItemId: itemId,   // vinculado al producto específico
+        shipmentItemId: itemId,
         fileUrl: `/uploads/${fileName}`,
         fileHash: String(hash),
+        fileSizeBytes,
         metadataJson: metadata,
-        type: 'DEPARTURE'         // esta ruta es siempre evidencia de despacho
+        type: 'DEPARTURE'
       }
     });
+
+    // Metering — fire and forget
+    trackEvidenceUploaded(companyId, evidence.id, fileSizeBytes);
 
     processEvidenceImage(evidence.id, filePath, data.mimetype);
 
@@ -139,42 +125,26 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // POST /shipments/:id/complaint/photo
-  // Foto de queja del receptor — aplica al envío completo, no a un item
-  // Sin autenticación JWT — acceso controlado por el disputeToken activo
-  // ---------------------------------------------------------------------------
   fastify.post('/shipments/:id/complaint/photo', {
     config: {
-      rateLimit: {
-        max: 3,
-        timeWindow: '10 minute'
-      }
+      rateLimit: { max: 3, timeWindow: '10 minute' }
     }
   }, async (request, reply) => {
     const { id: shipmentId } = request.params as { id: string };
     const ipAddress = request.ip;
 
     const activeToken = await prisma.disputeToken.findFirst({
-      where: {
-        shipmentId,
-        usedAt: null,
-        expiresAt: { gt: new Date() }
-      },
+      where: { shipmentId, usedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { generatedAt: 'desc' }
     });
 
     if (!activeToken) {
-      return reply.status(400).send({
-        error: 'No se encontró un token visual válido o ya expiró. Iniciá un nuevo reclamo.'
-      });
+      return reply.status(400).send({ error: 'No se encontró un token visual válido o ya expiró. Iniciá un nuevo reclamo.' });
     }
 
     const data = await request.file();
-    if (!data) {
-      return reply.status(400).send({ error: 'No se envió ninguna foto.' });
-    }
-
+    if (!data) return reply.status(400).send({ error: 'No se envió ninguna foto.' });
     if (!data.mimetype.startsWith('image/')) {
       return reply.status(400).send({ error: 'El archivo de la queja debe ser una imagen.' });
     }
@@ -189,14 +159,13 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
 
     if (!realFileType || !allowedMimes.includes(realFileType.mime)) {
       fs.unlinkSync(filePath);
-      request.log.warn(`[SECURITY] Intento de subida rechazado. MIME real: ${realFileType?.mime ?? 'desconocido'}`);
-      return reply.status(415).send({
-        error: 'Unsupported Media Type. El archivo está corrupto o tiene una extensión falsa.'
-      });
+      request.log.warn(`[SECURITY] MIME real rechazado: ${realFileType?.mime ?? 'desconocido'}`);
+      return reply.status(415).send({ error: 'Unsupported Media Type. El archivo está corrupto o tiene extensión falsa.' });
     }
 
     const calculatedHash = await calculateFileHash(filePath);
     const finalFileUrl = `/uploads/${fileName}`;
+    const { size: fileSizeBytes } = fs.statSync(filePath);
 
     const transactionResults = await prisma.$transaction([
       prisma.disputeToken.update({
@@ -206,9 +175,10 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
       prisma.evidence.create({
         data: {
           shipmentId,
-          shipmentItemId: null,  // queja del receptor — aplica al envío completo
+          shipmentItemId: null,
           fileUrl: finalFileUrl,
           fileHash: calculatedHash,
+          fileSizeBytes,
           metadataJson: { source: 'complaint_flow', visual_token: activeToken.visualToken },
           type: 'COMPLAINT'
         }
@@ -216,6 +186,15 @@ export async function evidenceRoutes(fastify: FastifyInstance) {
     ]);
 
     const evidence = transactionResults[1];
+
+    // Metering — obtenemos companyId desde el shipment
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { companyId: true }
+    });
+    if (shipment) {
+      trackEvidenceUploaded(shipment.companyId, evidence.id, fileSizeBytes);
+    }
 
     try {
       await linkDisputeEvidence(shipmentId, activeToken.id, evidence.id, ipAddress);

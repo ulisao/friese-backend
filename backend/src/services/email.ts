@@ -1,21 +1,24 @@
 // src/services/email.ts
 import { Resend } from 'resend';
+import { trackEmailSent } from './usage.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
 const FROM = 'Friese Logística <onboarding@resend.dev>';
 
-// ---------------------------------------------------------------------------
-// Email al receptor — notifica que su envío está en tránsito
-// ---------------------------------------------------------------------------
-export async function sendTrackingEmail(to: string, trackingCode: string, trackingToken: string) {
+export async function sendTrackingEmail(
+  to: string,
+  trackingCode: string,
+  trackingToken: string,
+  companyId: string
+) {
   const trackingLink = `${process.env.FRONTEND_URL}/tracking/${trackingCode}?token=${trackingToken}`;
+  const subject = '📦 Tu envío está en camino - Friese';
 
   try {
     const data = await resend.emails.send({
       from: FROM,
       to: [to],
-      subject: '📦 Tu envío está en camino - Friese',
+      subject,
       html: `
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 10px;">
           <h2 style="color: #000;">¡Hola! Tu paquete ya está en tránsito. 🚚</h2>
@@ -32,25 +35,26 @@ export async function sendTrackingEmail(to: string, trackingCode: string, tracki
       `
     });
     console.log(`[EMAIL] Tracking enviado a ${to} (ID: ${data.data?.id})`);
+    trackEmailSent(companyId, to, subject);
     return data;
   } catch (error) {
     console.error('[EMAIL ERROR] Falló el envío del correo de tracking:', error);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Email a la empresa — receptor dio conformidad
-// ---------------------------------------------------------------------------
 export async function sendConfirmationNotification(
   to: string,
   trackingCode: string,
-  destinatario: string
+  destinatario: string,
+  companyId: string
 ) {
+  const subject = `✅ Envío ${trackingCode} confirmado por el receptor`;
+
   try {
     const data = await resend.emails.send({
       from: FROM,
       to: [to],
-      subject: `✅ Envío ${trackingCode} confirmado por el receptor`,
+      subject,
       html: `
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 10px;">
           <h2 style="color: #000;">Entrega confirmada ✅</h2>
@@ -64,25 +68,26 @@ export async function sendConfirmationNotification(
       `
     });
     console.log(`[EMAIL] Confirmación enviada a empresa ${to} (ID: ${data.data?.id})`);
+    trackEmailSent(companyId, to, subject);
     return data;
   } catch (error) {
     console.error('[EMAIL ERROR] Falló el envío de notificación de confirmación:', error);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Email a la empresa — receptor levantó una queja
-// ---------------------------------------------------------------------------
 export async function sendDisputeNotification(
   to: string,
   trackingCode: string,
-  destinatario: string
+  destinatario: string,
+  companyId: string
 ) {
+  const subject = `⚠️ Reclamo recibido en envío ${trackingCode}`;
+
   try {
     const data = await resend.emails.send({
       from: FROM,
       to: [to],
-      subject: `⚠️ Reclamo recibido en envío ${trackingCode}`,
+      subject,
       html: `
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 10px;">
           <h2 style="color: #000;">Reclamo recibido ⚠️</h2>
@@ -91,12 +96,12 @@ export async function sendDisputeNotification(
             <p style="margin: 0;"><strong>Código de envío:</strong> ${trackingCode}</p>
             <p style="margin: 8px 0 0;"><strong>Estado:</strong> En disputa</p>
           </div>
-          <p>El receptor adjuntó una foto como evidencia del reclamo. Podés verla junto al token visual de verificación desde tu panel de Friese.</p>
-          <p style="font-size: 13px; color: #666;">Te recomendamos contactar al receptor a la brevedad para resolver la situación.</p>
+          <p>El receptor adjuntó una foto como evidencia del reclamo. Podés verla desde tu panel de Friese.</p>
         </div>
       `
     });
     console.log(`[EMAIL] Notificación de disputa enviada a empresa ${to} (ID: ${data.data?.id})`);
+    trackEmailSent(companyId, to, subject);
     return data;
   } catch (error) {
     console.error('[EMAIL ERROR] Falló el envío de notificación de disputa:', error);

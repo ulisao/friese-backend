@@ -12,7 +12,6 @@ datasource db {
 
 enum ShipmentStatus {
   PENDING_EVIDENCE
-  PENDING_FLETE
   IN_TRANSIT
   DELIVERED
   CLOSED
@@ -30,19 +29,26 @@ enum ReceiverActionType {
   DISPUTED
 }
 
+enum UsageEventType {
+  SHIPMENT_CREATED
+  EMAIL_SENT
+  EVIDENCE_UPLOADED
+}
+
 // ---------------------------------------------------------------------------
 // Core entities
 // ---------------------------------------------------------------------------
 
 model Company {
-  id           String     @id @default(uuid()) @db.Uuid
-  email        String     @unique @db.VarChar(255)
-  passwordHash String     @map("password_hash") @db.VarChar(255)
-  name         String     @db.VarChar(255)
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique @db.VarChar(255)
+  passwordHash String       @map("password_hash") @db.VarChar(255)
+  name         String       @db.VarChar(255)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
   devices      Device[]
   shipments    Shipment[]
+  usageEvents  UsageEvent[]
 
   @@map("companies")
 }
@@ -66,32 +72,28 @@ model Device {
 // ---------------------------------------------------------------------------
 
 model Shipment {
-  id               String          @id @default(uuid()) @db.Uuid
-  trackingCode     String          @unique @map("tracking_code") @db.VarChar(100)
-  trackingToken    String          @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
-  status           ShipmentStatus  @default(PENDING_EVIDENCE)
-  companyId        String          @map("company_id") @db.Uuid
-  company          Company         @relation(fields: [companyId], references: [id])
-  createdByDevice  String?         @map("created_by_device") @db.Uuid
-  device           Device?         @relation(fields: [createdByDevice], references: [id])
-  // Datos del destinatario — fuera de metadata para poder filtrar/buscar
-  receiverEmail    String          @map("receiver_email") @db.VarChar(255)
-  destinatario     String          @db.VarChar(255)
-  // Metadata libre para campos adicionales que las empresas quieran agregar
-  metadata         Json?
-  createdAt        DateTime        @default(now()) @map("created_at")
-  updatedAt        DateTime        @updatedAt @map("updated_at")
-  items            ShipmentItem[]
-  evidence         Evidence[]      // solo evidencia de tipo COMPLAINT (queja del receptor)
-  fleteValidations FleteValidation[]
-  disputeTokens    DisputeToken[]
-  auditLogs        AuditLog[]
-  receiverAction   ReceiverAction?
+  id              String         @id @default(uuid()) @db.Uuid
+  trackingCode    String         @unique @map("tracking_code") @db.VarChar(100)
+  trackingToken   String         @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
+  status          ShipmentStatus @default(PENDING_EVIDENCE)
+  companyId       String         @map("company_id") @db.Uuid
+  company         Company        @relation(fields: [companyId], references: [id])
+  createdByDevice String?        @map("created_by_device") @db.Uuid
+  device          Device?        @relation(fields: [createdByDevice], references: [id])
+  receiverEmail   String         @map("receiver_email") @db.VarChar(255)
+  destinatario    String         @db.VarChar(255)
+  metadata        Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  items           ShipmentItem[]
+  evidence        Evidence[]
+  disputeTokens   DisputeToken[]
+  auditLogs       AuditLog[]
+  receiverAction  ReceiverAction?
 
   @@map("shipments")
 }
 
-// Cada producto dentro de un envío
 model ShipmentItem {
   id          String     @id @default(uuid()) @db.Uuid
   shipmentId  String     @map("shipment_id") @db.Uuid
@@ -99,42 +101,29 @@ model ShipmentItem {
   descripcion String     @db.VarChar(255)
   lote        String?    @db.VarChar(100)
   cantidad    Int
-  marca       String?    @db.VarChar(100) // proveedor o marca del producto
+  marca       String?    @db.VarChar(100)
   material    String?    @db.VarChar(100)
   createdAt   DateTime   @default(now()) @map("created_at")
-  evidence    Evidence[] // fotos de despacho de este item específico
+  evidence    Evidence[]
 
   @@map("shipment_items")
 }
 
 model Evidence {
-  id             String        @id @default(uuid()) @db.Uuid
-  shipmentId     String        @map("shipment_id") @db.Uuid
-  shipment       Shipment      @relation(fields: [shipmentId], references: [id])
-  // Nullable: presente para DEPARTURE (foto del item), null para COMPLAINT (queja general)
-  shipmentItemId String?       @map("shipment_item_id") @db.Uuid
-  shipmentItem   ShipmentItem? @relation(fields: [shipmentItemId], references: [id])
-  fileUrl        String        @map("file_url")
-  fileHash       String        @map("file_hash") @db.VarChar(64)
-  metadataJson   Json          @map("metadata_json")
+  id             String         @id @default(uuid()) @db.Uuid
+  shipmentId     String         @map("shipment_id") @db.Uuid
+  shipment       Shipment       @relation(fields: [shipmentId], references: [id])
+  shipmentItemId String?        @map("shipment_item_id") @db.Uuid
+  shipmentItem   ShipmentItem?  @relation(fields: [shipmentItemId], references: [id])
+  fileUrl        String         @map("file_url")
+  fileHash       String         @map("file_hash") @db.VarChar(64)
+  fileSizeBytes  Int?           @map("file_size_bytes")
+  metadataJson   Json           @map("metadata_json")
   type           EvidenceType
-  createdAt      DateTime      @default(now()) @map("created_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
   receiverAction ReceiverAction?
 
   @@map("evidence")
-}
-
-model FleteValidation {
-  id          String    @id @default(uuid()) @db.Uuid
-  shipmentId  String    @map("shipment_id") @db.Uuid
-  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
-  phoneSentTo String    @map("phone_sent_to") @db.VarChar(20)
-  otpCode     String    @map("otp_code") @db.VarChar(255)
-  validatedAt DateTime? @map("validated_at")
-  ipAddress   String?   @map("ip_address") @db.VarChar(45)
-  createdAt   DateTime  @default(now()) @map("created_at")
-
-  @@map("flete_validations")
 }
 
 model DisputeToken {
@@ -175,4 +164,21 @@ model AuditLog {
   timestamp  DateTime        @default(now())
 
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Metering
+// ---------------------------------------------------------------------------
+
+model UsageEvent {
+  id        String         @id @default(uuid()) @db.Uuid
+  companyId String         @map("company_id") @db.Uuid
+  company   Company        @relation(fields: [companyId], references: [id])
+  type      UsageEventType
+  metadata  Json?
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@index([companyId, createdAt])
+  @@index([companyId, type])
+  @@map("usage_events")
 }
