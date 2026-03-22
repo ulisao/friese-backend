@@ -3,11 +3,11 @@ import Fastify from 'fastify';
 import { prisma } from './db.js';
 import { jwtPlugin } from './plugins/jwt.plugin.js';
 import { authRoutes } from './routes/auth.routes.js';
-import { shipmentRoutes } from './routes/shipment.routes.js';
+import { shipmentRoutes } from './routes/shipments.routes.js';
 import { evidenceRoutes } from './routes/evidence.routes.js';
 import { trackingRoutes } from './routes/tracking.routes.js';
-import { devicesRoutes } from './routes/admin/devices.routes.js';
-import { superadminRoutes } from './routes/superadmin/superadmin.routes.js';
+import { devicesRoutes } from './routes/devices.routes.js';
+import { superadminRoutes } from './routes/superadmin.routes.js';
 import multipart from '@fastify/multipart';
 import fastifyRateLimit from '@fastify/rate-limit';
 
