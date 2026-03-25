@@ -72,26 +72,45 @@ model Device {
 // ---------------------------------------------------------------------------
 
 model Shipment {
-  id              String         @id @default(uuid()) @db.Uuid
-  trackingCode    String         @unique @map("tracking_code") @db.VarChar(100)
-  trackingToken   String         @unique @default(uuid()) @map("tracking_token") @db.VarChar(100)
-  status          ShipmentStatus @default(PENDING_EVIDENCE)
-  companyId       String         @map("company_id") @db.Uuid
-  company         Company        @relation(fields: [companyId], references: [id])
-  createdByDevice String?        @map("created_by_device") @db.Uuid
-  device          Device?        @relation(fields: [createdByDevice], references: [id])
-  receiverEmail   String         @map("receiver_email") @db.VarChar(255)
-  destinatario    String         @db.VarChar(255)
+  id              String          @id @default(uuid()) @db.Uuid
+  trackingCode    String          @unique @map("tracking_code") @db.VarChar(100)
+  // trackingToken eliminado — el acceso del receptor ahora vive en ReceiverLink
+  status          ShipmentStatus  @default(PENDING_EVIDENCE)
+  companyId       String          @map("company_id") @db.Uuid
+  company         Company         @relation(fields: [companyId], references: [id])
+  createdByDevice String?         @map("created_by_device") @db.Uuid
+  device          Device?         @relation(fields: [createdByDevice], references: [id])
+  receiverEmail   String          @map("receiver_email") @db.VarChar(255)
+  destinatario    String          @db.VarChar(255)
   metadata        Json?
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  // Timestamp exacto desde donde corre el reloj de 72hs hábiles
+  // Se setea cuando el admin marca el envío como DELIVERED
+  deliveredAt     DateTime?       @map("delivered_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
   items           ShipmentItem[]
   evidence        Evidence[]
   disputeTokens   DisputeToken[]
   auditLogs       AuditLog[]
   receiverAction  ReceiverAction?
+  receiverLink    ReceiverLink?
 
   @@map("shipments")
+}
+
+// Acceso del receptor al portal de tracking
+// Reemplaza trackingToken en Shipment — ahora tiene TTL, registro de apertura
+// y puede regenerarse sin tocar el Shipment
+model ReceiverLink {
+  id          String    @id @default(uuid()) @db.Uuid
+  shipmentId  String    @unique @map("shipment_id") @db.Uuid
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
+  token       String    @unique @default(uuid()) @db.VarChar(100)
+  // Si el admin regenera el link, el anterior se invalida
+  invalidated    Boolean   @default(false)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("receiver_links")
 }
 
 model ShipmentItem {
