@@ -7,6 +7,7 @@ import { shipmentRoutes } from './routes/shipments.routes.js';
 import { evidenceRoutes } from './routes/evidence.routes.js';
 import { trackingRoutes } from './routes/tracking.routes.js';
 import { devicesRoutes } from './routes/devices.routes.js';
+import { deliverRoutes } from './routes/deliver.routes.js';
 import { superadminRoutes } from './routes/superadmin.routes.js';
 import multipart from '@fastify/multipart';
 import fastifyRateLimit from '@fastify/rate-limit';
@@ -46,6 +47,7 @@ const start = async () => {
     fastify.register(evidenceRoutes);
     fastify.register(trackingRoutes);
     fastify.register(devicesRoutes);
+    fastify.register(deliverRoutes);
     fastify.register(superadminRoutes);
 
     await fastify.listen({ port: 3000 });

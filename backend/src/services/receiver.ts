@@ -7,7 +7,7 @@ import type { ShipmentStatus } from '@prisma/client';
 async function validateReceiverAccess(shipmentId: string, trackingToken: string) {
   const shipment = await prisma.shipment.findUnique({
     where: { id: shipmentId },
-    include: { receiverAction: true, company: true }
+    include: { receiverAction: true, company: true, receiverLink: true }
   });
 
   if (!shipment) {
@@ -16,7 +16,7 @@ async function validateReceiverAccess(shipmentId: string, trackingToken: string)
     throw err;
   }
 
-  if (trackingToken !== shipment.trackingToken) {
+  if (!shipment.receiverLink || trackingToken !== shipment.receiverLink.token || shipment.receiverLink.invalidated) {
     const err = new Error('No autorizado. Token de acceso inválido.');
     (err as any).statusCode = 401;
     throw err;

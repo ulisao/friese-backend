@@ -1,6 +1,6 @@
 // src/services/email.ts
 import { Resend } from 'resend';
-import { trackEmailSent } from './usage.service.js';
+import { trackEmailSent } from './usage.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = 'Friese Logística <onboarding@resend.dev>';

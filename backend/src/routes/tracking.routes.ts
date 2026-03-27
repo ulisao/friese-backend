@@ -12,6 +12,7 @@ export async function trackingRoutes(fastify: FastifyInstance) {
     const shipment = await prisma.shipment.findUnique({
       where: { trackingCode: code },
       include: {
+        receiverLink: true,
         items: {
           include: {
             evidence: {
@@ -33,7 +34,7 @@ export async function trackingRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Envío no encontrado.' });
     }
 
-    if (!token || token !== shipment.trackingToken) {
+    if (!token || !shipment.receiverLink || shipment.receiverLink.token !== token || shipment.receiverLink.invalidated) {
       request.log.warn(`[SECURITY] Intento de acceso no autorizado al tracking ${code}`);
       return reply.status(401).send({ error: 'No autorizado. Token de seguimiento inválido o ausente.' });
     }
