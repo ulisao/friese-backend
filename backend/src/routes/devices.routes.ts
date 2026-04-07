@@ -1,6 +1,6 @@
 // src/routes/admin/devices.routes.ts
 import type { FastifyInstance } from 'fastify';
-import { prisma } from '../../db.js';
+import { prisma } from '../db.js';
 import crypto from 'node:crypto';
 
 export async function devicesRoutes(fastify: FastifyInstance) {
@@ -108,5 +108,26 @@ export async function devicesRoutes(fastify: FastifyInstance) {
       operator_name: revoked.operatorName,
       revoked_at: revoked.revokedAt
     });
+  });
+
+  // GET /admin/devices — Lista de devices de la empresa autenticada
+  fastify.get('/admin/devices', {
+    preHandler: fastify.authenticate
+  }, async (request, reply) => {
+    const { id: companyId } = request.user;
+
+    const devices = await prisma.device.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        operatorName: true,
+        isActive: true,
+        createdAt: true,
+        revokedAt: true
+      }
+    });
+
+    return reply.status(200).send({ data: devices });
   });
 }

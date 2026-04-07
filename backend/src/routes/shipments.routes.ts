@@ -5,7 +5,6 @@ import { generateUniqueTrackingCode } from '../utils/generateTracking.js';
 import { confirmDelivery, initiateDispute } from '../services/receiver.js';
 import { trackShipmentCreated } from '../services/usage.js';
 import { sendTrackingEmail } from '../services/email.js';
-import crypto from 'node:crypto';
 
 type ProductoInput = {
   descripcion: string;
@@ -35,10 +34,10 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
               required: ['descripcion', 'cantidad'],
               properties: {
                 descripcion: { type: 'string' },
-                lote:        { type: 'string' },
-                cantidad:    { type: 'number', minimum: 1 },
-                marca:       { type: 'string' },
-                material:    { type: 'string' }
+                lote: { type: 'string' },
+                cantidad: { type: 'number', minimum: 1 },
+                marca: { type: 'string' },
+                material: { type: 'string' }
               }
             }
           }
@@ -59,15 +58,14 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     };
 
     const trackingCode = await generateUniqueTrackingCode();
-    const trackingToken = crypto.randomUUID();
 
     const shipment = await prisma.$transaction(async (tx) => {
+      // trackingToken eliminado — ya no existe en el schema
       const newShipment = await tx.shipment.create({
         data: {
           receiverEmail: email,
           destinatario,
           trackingCode,
-          trackingToken,
           companyId,
           createdByDevice: deviceId,
         }
@@ -75,12 +73,12 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
 
       await tx.shipmentItem.createMany({
         data: productos.map((p) => ({
-          shipmentId:  newShipment.id,
+          shipmentId: newShipment.id,
           descripcion: p.descripcion,
-          lote:        p.lote ?? null,
-          cantidad:    p.cantidad,
-          marca:       p.marca ?? null,
-          material:    p.material ?? null,
+          lote: p.lote ?? null,
+          cantidad: p.cantidad,
+          marca: p.marca ?? null,
+          material: p.material ?? null,
         }))
       });
 
@@ -95,15 +93,14 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
     trackShipmentCreated(companyId, shipment.id);
 
     return reply.status(201).send({
-      shipment_id:    shipment.id,
-      tracking_code:  shipment.trackingCode,
-      tracking_token: shipment.trackingToken,
-      items:          shipment.items
+      shipment_id: shipment.id,
+      tracking_code: shipment.trackingCode,
+      items: shipment.items
     });
   });
 
   // POST /shipments/:id/finalize — Operario finaliza la carga
-  // Transiciona a IN_TRANSIT y dispara el email al receptor
+  // Transiciona a IN_TRANSIT, crea el ReceiverLink y notifica al receptor
   fastify.post('/shipments/:id/finalize', {
     preHandler: fastify.authenticateDevice
   }, async (request, reply) => {
@@ -133,7 +130,6 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       });
     }
 
-    // Verificar que al menos un item tiene evidencia — no se puede despachar sin fotos
     const itemsWithEvidence = await prisma.evidence.findFirst({
       where: { shipmentId, type: 'DEPARTURE' }
     });
@@ -144,26 +140,34 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       });
     }
 
-    await prisma.$transaction([
-      prisma.shipment.update({
+    // Crear ReceiverLink — es el token de acceso del receptor al portal de tracking
+    // Se crea acá para que el receptor pueda ver el estado desde IN_TRANSIT en adelante
+    // El mismo link se reutiliza cuando el admin marca DELIVERED
+    const receiverLink = await prisma.$transaction(async (tx) => {
+      await tx.shipment.update({
         where: { id: shipmentId },
         data: { status: 'IN_TRANSIT' }
-      }),
-      prisma.auditLog.create({
+      });
+
+      await tx.auditLog.create({
         data: {
           shipmentId,
           fromStatus: 'PENDING_EVIDENCE',
-          toStatus:   'IN_TRANSIT',
-          actor:      request.deviceId ?? companyId
+          toStatus: 'IN_TRANSIT',
+          actor: request.deviceId ?? companyId
         }
-      })
-    ]);
+      });
 
-    // Email al receptor — fire and forget
+      return tx.receiverLink.create({
+        data: { shipmentId }
+      });
+    });
+
+    // Email informativo al receptor — fire and forget
     sendTrackingEmail(
       shipment.receiverEmail,
       shipment.trackingCode,
-      shipment.trackingToken,
+      receiverLink.token,
       shipment.companyId
     );
 
@@ -221,5 +225,60 @@ export async function shipmentRoutes(fastify: FastifyInstance) {
       request.log.warn({ err }, `[receiver] dispute failed for shipment ${shipmentId}`);
       return reply.status(err.statusCode ?? 500).send({ error: err.message });
     }
+  });
+
+  // GET /shipments — Lista de envíos de la empresa autenticada
+  fastify.get('/shipments', {
+    preHandler: fastify.authenticate,
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          status: { type: 'string' },
+          page: { type: 'number', default: 1 },
+          limit: { type: 'number', default: 20 }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const { id: companyId } = request.user;
+    const { status, page = 1, limit = 20 } = request.query as {
+      status?: string;
+      page?: number;
+      limit?: number;
+    };
+
+    const where = {
+      companyId,
+      ...(status ? { status: status as any } : {})
+    };
+
+    const [shipments, total] = await prisma.$transaction([
+      prisma.shipment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          trackingCode: true,
+          status: true,
+          destinatario: true,
+          receiverEmail: true,
+          deliveredAt: true,
+          createdAt: true,
+          _count: { select: { items: true } }
+        }
+      }),
+      prisma.shipment.count({ where })
+    ]);
+
+    return reply.status(200).send({
+      data: shipments,
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit)
+    });
   });
 }
