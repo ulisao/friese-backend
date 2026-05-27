@@ -1,6 +1,6 @@
 // src/routes/superadmin/superadmin.routes.ts
 import type { FastifyInstance } from 'fastify';
-import { getCompanyUsage, getAllCompaniesUsage } from '../../services/usage.js'; 
+import { getCompanyUsage, getAllCompaniesUsage } from '../services/usage.js';
 
 export async function superadminRoutes(fastify: FastifyInstance) {
 
