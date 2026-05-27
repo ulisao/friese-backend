@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    // Layout del proyecto
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // Configuración de Módulos (Clave para Node moderno)
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "esModuleInterop": true,
+
+    // Entorno Node
+    "types": ["node"],
+
+    // Opciones de compilación
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // Tipado estricto
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "strict": true,
+    
+    // Configuración avanzada de módulos
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  }
+}
